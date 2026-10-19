@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, notifUrl, prDetail, prRow, prText, runRow, toasts } from './format'
+import { ago, checks, confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, notifUrl, prDetail, prRow, prText, runRow, toasts } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -142,4 +142,15 @@ test('desktop row: draft pill replaces review, CI pill by tone, runs get one pil
   expect(desktopRow(runRow({ databaseId: 1, status: 'in_progress', displayTitle: 'x', workflowName: 'CI', createdAt: '2026-10-19T11:00:00Z' }, now)).pills)
     .toEqual([{ text: 'Running', tone: 'warning' }])
   expect(desktopRow(issueRow({ number: 3, title: 'Bug', updatedAt: '2026-10-19T11:00:00Z', url: 'u' }, now)).pills).toEqual([])
+})
+
+test('matches: title, #n, branch or author, any case; blank matches all', () => {
+  const r = prRow({ number: 12, title: 'Fix Login', author: { login: 'ann' }, headRefName: 'auth-fix', baseRefName: 'main', updatedAt: '2026-10-19T11:00:00Z' }, Date.parse('2026-10-19T12:00:00Z'))
+  for (const q of ['login', '#12', 'AUTH', 'Ann', '  ', '']) expect(matches(r, q)).toBe(true)
+  for (const q of ['#1x', 'bob', 'main']) expect(matches(r, q)).toBe(false)
+})
+
+test('emptyState: notifications explain the repo scope and link out', () => {
+  expect(emptyState('notifs', 'o/r')).toEqual({ title: 'No unread notifications', line: 'No unread notifications for o/r. This tab shows this repo only.', href: 'https://github.com/notifications' })
+  expect(emptyState('checks', 'o/r').line).toBe('No workflow runs in this repo.')
 })

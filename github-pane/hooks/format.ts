@@ -1,4 +1,4 @@
-import type { PrParts, Row, Tone } from '../types'
+import type { PrParts, Row, Tab, Tone } from '../types'
 
 export const ago = (iso: string, now: number) => {
   const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
@@ -217,3 +217,19 @@ export const fixPrompt = (r: Row, runId: number, log: string) =>
     '```',
     'Find and fix the cause of this CI failure.',
   ].join('\n')
+
+// Filter: the query (trimmed, any case) inside the title, `#n`, branch or author; empty matches all.
+export const matches = (r: Row, query: string) => {
+  const q = query.trim().toLowerCase()
+  return !q || [r.title, `#${r.id}`, r.branch, r.author].some(x => x?.toLowerCase().includes(q))
+}
+
+// Why a tab is empty: a short title (desktop card) and one sentence (both surfaces), a link where one helps.
+export type Empty = { title: string; line: string; href?: string }
+export const emptyState = (t: Tab, repo: string): Empty => ({
+  prs: { title: 'No open pull requests', line: 'No open pull requests in this repo.' },
+  checks: { title: 'No workflow runs', line: 'No workflow runs in this repo.' },
+  issues: { title: 'No open issues', line: 'No open issues in this repo.' },
+  mine: { title: 'Nothing waiting on you', line: 'Nothing waiting on you: no review requests, open PRs of yours or issues assigned to you.' },
+  notifs: { title: 'No unread notifications', line: `No unread notifications for ${repo}. This tab shows this repo only.`, href: 'https://github.com/notifications' },
+})[t]

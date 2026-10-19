@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Detail, PrParts, Row, Snapshot, Tab, Tone } from '../types'
-import type { Pill, Seen } from './format'
-import { confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, prDetail, prRow, prText, runRow, toasts } from './format'
+import type { Empty, Pill, Seen } from './format'
+import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, prDetail, prRow, prText, runRow, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
@@ -23,6 +23,7 @@ const selected = atom({ plugin: 'github-pane', key: 'selected' } as const, null 
 const detail = atom({ plugin: 'github-pane', key: 'detail' } as const, null as Detail | null)
 const busy = atom({ plugin: 'github-pane', key: 'busy' } as const, null as string | null)
 const confirm = atom({ plugin: 'github-pane', key: 'confirm' } as const, null as string | null) // row key armed for merge
+const filter = atom({ plugin: 'github-pane', key: 'filter' } as const, '') // desktop list filter, cleared on tab change
 
 type $ = EngineInterface
 
@@ -166,15 +167,19 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link, Code, Markdown } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button, Link, Code, Markdown } = els
     const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
-    const [s, t, sel, det, work, armed] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm)])
-    const rows = s.rows[t]
+    const [s, t, sel, det, work, armed, q] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter)])
+    const all = s.rows[t]
+    const Input = isApp && 'Input' in els ? els.Input : null // the terminal keeps its tree; mobile has no field
+    const query = Input ? q : ''
+    const rows = all.filter(r => matches(r, query))
     const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
     const merge = async (r: Row) => {
       const c = confirmPress(armed, r.key)
       await update($, confirm, () => c.armed)
-      if (!c.run) return update($, detail, () => ({ text: `Press m again to squash-merge #${r.id} and delete its branch.` }))
+      if (!c.run) return isApp ? undefined : update($, detail, () => ({ text: `Press m again to squash-merge #${r.id} and delete its branch.` })) // desktop draws the confirm card
       return act($, `Merge #${r.id}`, ['pr', 'merge', String(r.id), '--squash', '--delete-branch'], o => o.trim() || `Merged #${r.id}`)
     }
     const time = s.at ? new Date(s.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : null
@@ -195,7 +200,7 @@ export const register: Register = on => {
           <Button key="ready" hotkey="y" onPress={() => act($, `Ready #${r.id}`, ['pr', 'ready', String(r.id)], o => o.trim() || `#${r.id} marked ready for review`)}>Ready</Button>
         ) : null}
         {r.kind === 'pr' ? (
-          <Button key="merge" hotkey="m" variant={isApp || armed === r.key ? 'primary' : 'secondary'} onPress={() => merge(r)}>{armed === r.key ? 'Confirm merge' : 'Merge'}</Button>
+          <Button key="merge" hotkey="m" variant={isApp || armed === r.key ? 'primary' : 'secondary'} onPress={() => merge(r)}>{armed === r.key && !isApp ? 'Confirm merge' : 'Merge'}</Button>
         ) : null}
         {r.kind === 'run' && r.isFailed ? (
           <Button key="rerun" hotkey="x" variant={isApp ? 'primary' : undefined} onPress={() => act($, 'Rerun', ['run', 'rerun', String(r.id), '--failed'], () => `Rerunning failed jobs of run ${r.id}`)}>Rerun failed</Button>
@@ -253,6 +258,26 @@ export const register: Register = on => {
       </Box>
     )
 
+    // Desktop merge confirm: replaces the card's detail and actions until Merge or Cancel.
+    const confirmCard = (r: Row) => (
+      <Box key="merge-confirm" flexDirection="column" rowGap="xs" paddingY="xs">
+        <Text weight="semibold" wrap="wrap">{`Squash-merge #${r.id} into ${r.base ?? 'its base'}?`}</Text>
+        <Text size="caption" dimColor wrap="wrap">{`Deletes branch ${r.branch ?? ''} on GitHub and locally.`}</Text>
+        <Box flexDirection="row" justifyContent="flex-end" columnGap={1}>
+          <Button key="cancel-merge" onPress={() => update($, confirm, () => null)}>Cancel</Button>
+          <Button key="confirm-merge" hotkey="m" variant="primary" onPress={() => merge(r)}>Merge</Button>
+        </Box>
+      </Box>
+    )
+    const emptyCard = (x: Empty) => (
+      <Box key="empty" flexDirection="column" alignItems="center" rowGap="xs" borderStyle="dashed" borderColor="subtle" padding={1}>
+        <Text dimColor>○</Text>
+        <Text weight="semibold">{x.title}</Text>
+        <Text size="caption" dimColor wrap="wrap">{x.line}</Text>
+        {x.href ? <Link href={x.href}>Open all notifications on GitHub</Link> : null}
+      </Box>
+    )
+
     const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={PILL_BG[p.tone]} color={p.tone}>{` ${p.text} `}</Text>
     const appRowView = (r: Row) => {
       const d = desktopRow(r)
@@ -276,8 +301,9 @@ export const register: Register = on => {
           </Box>
           {sel === r.key ? (
             <Box key={`card-${r.key}`} flexDirection="column" rowGap={1} borderStyle="round" borderColor="subtle" paddingX={1} marginX={1} marginBottom="xs">
-              {det ? appDetail(det) : null}
-              {actions(r)}
+              {armed === r.key ? confirmCard(r) : null}
+              {armed !== r.key && det ? appDetail(det) : null}
+              {armed !== r.key ? actions(r) : null}
             </Box>
           ) : null}
         </Box>
@@ -317,8 +343,8 @@ export const register: Register = on => {
         <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
           {TABS.map(([id, label], i) => (
             <Button key={`tab-${id}`} hotkey={String(i + 1)} variant={id === t ? 'primary' : 'secondary'}
-              onPress={() => Promise.all([update($, tab, () => id), pick(null)])}>
-              {`${label} ${s.rows[id].length}`}
+              onPress={() => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => '')])}>
+              {`${label} ${id === t && query ? `${rows.length} / ${all.length}` : s.rows[id].length}`}
             </Button>
           ))}
         </Box>
@@ -327,10 +353,19 @@ export const register: Register = on => {
           <Box borderStyle="round" borderColor="error" paddingX={1}><Text color="error" wrap="wrap">{errorText}</Text></Box>
         ) : errorText ? <Text color="error">{errorText}</Text> : null}
 
+        {Input && all.length ? (
+          <Box key="filter-row" flexDirection="row" alignItems="center" columnGap={1}>
+            <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
+            {q ? <Button key="clear-filter" label="Clear filter" plain dimColor onPress={() => update($, filter, () => '')}><Text>✕</Text></Button> : null}
+          </Box>
+        ) : null}
+
         <Box flexDirection="column">
-          {rows.length === 0 && s.at ? <Text dimColor>{t === 'mine' ? 'Nothing waiting on you.' : t === 'notifs' ? 'No unread notifications.' : 'Nothing here.'}</Text> : null}
+          {all.length === 0 && s.at && s.repo ? (isApp ? emptyCard(emptyState(t, s.repo)) : <Text dimColor>{emptyState(t, s.repo).line}</Text>) : null}
+          {all.length > 0 && rows.length === 0 ? emptyCard({ title: 'No matches', line: `Nothing in this tab matches "${query.trim()}".` }) : null}
           {rows.map(row)}
         </Box>
+        {query && rows.length ? <Text size="caption" dimColor>{`${rows.length} of ${all.length} match`}</Text> : null}
 
         {det && isApp && !(s.here?.key === sel || rows.some(r => r.key === sel)) ? (
           <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>{appDetail(det)}</Box>
