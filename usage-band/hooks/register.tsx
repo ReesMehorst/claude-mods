@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, SessionUsage } from 'claude-code'
+import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import type { Snapshot } from '../types'
-import { addUsage, bar, compactLine, emptyTokens, emptyTrend, mode, recordTurn, segments, warnings } from './summarize'
+import { addUsage, bar, barSvg, compactLine, emptyTokens, emptyTrend, mode, recordTurn, segments, warnings } from './summarize'
 
 const snap = atom({ plugin: 'usage-band', key: 'snap' } as const, null)
 const tokens = atom({ plugin: 'usage-band', key: 'tokens' } as const, emptyTokens)
@@ -18,6 +18,13 @@ const build = (u: SessionUsage): Snapshot => ({
   startedAt: u.startedAt,
   rateLimits: u.rateLimits.map(r => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt })),
 })
+
+async function toggle($: EngineInterface) {
+  const isCompact = !(await read($, compact))
+  await $.store.set('compact', isCompact)
+  await update($, compact, () => isCompact)
+  return isCompact
+}
 
 export const register: Register = (on, options) => {
   const budget = Number(options.budgetUsd ?? 0)
@@ -55,19 +62,67 @@ export const register: Register = (on, options) => {
     return r
   })
 
-  on('command.run', { command: 'usage-band' }, async $ => {
-    const isCompact = !(await read($, compact))
-    await $.store.set('compact', isCompact)
-    await update($, compact, () => isCompact)
-    return { text: `Usage band: ${isCompact ? 'compact' : 'full'}` }
-  })
+  on('command.run', { command: 'usage-band' }, async $ => ({ text: `Usage band: ${(await toggle($)) ? 'compact' : 'full'}` }))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const s = await read($, snap)
     if (s === null || e.props.hasSurvey) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
     const m = mode(s)
     const segs = segments(s, await read($, tokens), await $.clock.now(), budget, await read($, trend))
+
+    // Graphical surfaces (desktop, vscode, mobile): meters + buttons. Terminal keeps the text band below.
+    if (e.surface !== 'terminal') {
+      const { Box, Text, Button, Svg } = $.ui.resolve(e)
+      const isCompact = await read($, compact)
+      const worst = segs.find(x => x.level === 'error') ?? segs.find(x => x.level === 'warning')
+      const toggleBtn = (
+        <Button key="toggle" variant="secondary" onPress={() => toggle($)}>{isCompact ? 'Show' : 'Hide'}</Button>
+      )
+      const head = (
+        <Box flexDirection="row" alignItems="center" columnGap="sm">
+          <Text bold color={m === 'plan' ? 'claude' : 'suggestion'}>{m === 'plan' ? 'Plan usage' : 'API usage'}</Text>
+          {worst ? <Text color={worst.level}>●</Text> : null}
+          <Box flexGrow={1} />
+          {/* void: command.run is queued until the session is idle */}
+          <Button key="clear" variant="secondary" onPress={() => void $.command.run({ command: 'clear' })}>/clear</Button>
+          <Button key="compact" variant="secondary" onPress={() => void $.command.run({ command: 'compact' })}>/compact</Button>
+          <Button key="refresh" variant="secondary" onPress={async () => { const fresh = build(await $.session.usage()); await update($, snap, () => fresh) }}>Refresh</Button>
+          {toggleBtn}
+        </Box>
+      )
+      if (isCompact) {
+        return (
+          <Box flexDirection="row" alignItems="center" columnGap="sm" paddingX={1}>
+            <Text bold color={m === 'plan' ? 'claude' : 'suggestion'}>{m.toUpperCase()}</Text>
+            <Text dimColor wrap="truncate-end">{compactLine(m, segs).slice(m.length + 3)}</Text>
+            <Box flexGrow={1} />
+            {toggleBtn}
+          </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column" rowGap="sm" paddingX={1} paddingY={1} borderStyle="round" borderColor="subtle">
+          {head}
+          <Box flexDirection="row" flexWrap="wrap" columnGap="lg" rowGap="md">
+            {segs.map(seg => {
+              const tint = seg.level === 'success' ? undefined : seg.level
+              return (
+                <Box key={seg.label} flexDirection="column" minWidth={20} rowGap="xs">
+                  <Text dimColor size="caption">{seg.label.toUpperCase()}</Text>
+                  <Text size="heading" weight="bold" tabular dimColor={seg.isMuted} color={tint}>{seg.value}</Text>
+                  {seg.percent != null
+                    ? <Svg source={barSvg(seg.percent, seg.level)} alt={`${seg.label} ${seg.value}`} width={120} height={6} />
+                    : null}
+                  <Text dimColor size="caption" color={tint}>{seg.detail || ' '}</Text>
+                </Box>
+              )
+            })}
+          </Box>
+        </Box>
+      )
+    }
+
+    const { Box, Text } = $.ui.resolve(e)
     const badge = <Text inverse bold color={m === 'plan' ? 'claude' : 'suggestion'}>{` ${m.toUpperCase()} `}</Text>
 
     if (await read($, compact)) {

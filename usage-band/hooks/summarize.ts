@@ -40,6 +40,17 @@ export const bar = (percent: number, width = 8) => {
   return ['━'.repeat(full), '─'.repeat(width - full)] as const
 }
 
+const FILL: Record<Level, string> = { success: '#3fb950', warning: '#d29922', error: '#f85149' }
+
+// Rounded meter for graphical surfaces; translucent grey track reads on light and dark.
+export const barSvg = (percent: number, level: Level, width = 120, height = 6) => {
+  const w = Math.round((Math.max(0, Math.min(100, percent)) / 100) * width)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    `<rect width="${width}" height="${height}" rx="${height / 2}" fill="#8b949e" fill-opacity="0.25"/>` +
+    (w > 0 ? `<rect width="${Math.max(w, height)}" height="${height}" rx="${height / 2}" fill="${FILL[level]}"/>` : '') +
+    `</svg>`
+}
+
 const elapsedFraction = (resetsAt: string | undefined, kind: string, now: number) => {
   const dur = WINDOW_MS[kind]
   if (!dur || !resetsAt) return null
