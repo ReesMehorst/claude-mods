@@ -76,13 +76,16 @@ export const register: Register = (on, options) => {
       const isCompact = await read($, compact)
       const worst = segs.find(x => x.level === 'error') ?? segs.find(x => x.level === 'warning')
       const toggleBtn = (
-        <Button key="toggle" variant="secondary" onPress={() => toggle($)}>{isCompact ? 'Expand' : 'Compact'}</Button>
+        <Button key="toggle" variant="secondary" onPress={() => toggle($)}>{isCompact ? 'Show' : 'Hide'}</Button>
       )
       const head = (
         <Box flexDirection="row" alignItems="center" columnGap="sm">
           <Text bold color={m === 'plan' ? 'claude' : 'suggestion'}>{m === 'plan' ? 'Plan usage' : 'API usage'}</Text>
           {worst ? <Text color={worst.level}>●</Text> : null}
           <Box flexGrow={1} />
+          {/* void: command.run is queued until the session is idle */}
+          <Button key="clear" variant="secondary" onPress={() => void $.command.run({ command: 'clear' })}>/clear</Button>
+          <Button key="compact" variant="secondary" onPress={() => void $.command.run({ command: 'compact' })}>/compact</Button>
           <Button key="refresh" variant="secondary" onPress={async () => { const fresh = build(await $.session.usage()); await update($, snap, () => fresh) }}>Refresh</Button>
           {toggleBtn}
         </Box>
