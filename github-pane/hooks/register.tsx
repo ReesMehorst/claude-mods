@@ -7,6 +7,7 @@ import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow,
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
+const NARROW_COLS = 80 // below this the desktop draws tabs as a View picker: the segmented row needs ~75
 const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me'], ['notifs', 'Notifications']]
 const DETAIL_FIELDS = 'body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles'
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
@@ -170,7 +171,7 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link, Code, Markdown } = els
     const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
-    const Select = isApp && e.props.bodyColumns < 50 && 'Select' in els ? els.Select : null // narrow desktop pane: tabs as a picker
+    const Select = isApp && e.props.bodyColumns < NARROW_COLS && 'Select' in els ? els.Select : null // narrow desktop pane: tabs as a picker
     const [s, t, sel, det, work, armed, q] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter)])
     const all = s.rows[t]
     const Input = isApp && 'Input' in els ? els.Input : null // the terminal keeps its tree; mobile has no field
@@ -344,8 +345,10 @@ export const register: Register = on => {
         ) : null}
 
         {Select ? (
-          <Select key="tab-select" label="View" value={t} onSelect={(v: string) => go(v as Tab)}
-            options={TABS.map(([id, label]) => ({ value: id, label: tabOption(label, s.rows[id], shown(id)) }))} />
+          <Box width="100%" flexDirection="column" alignItems="stretch">{/* Select has no width prop: its column stretches it */}
+            <Select key="tab-select" label="View" value={t} onSelect={(v: string) => go(v as Tab)}
+              options={TABS.map(([id, label]) => ({ value: id, label: tabOption(label, s.rows[id], shown(id)) }))} />
+          </Box>
         ) : isApp ? (
           <Box key="tabs" flexDirection="row" flexWrap="wrap" borderStyle="round" borderColor="subtle">
             {TABS.map(([id, label], i) => (
@@ -374,7 +377,9 @@ export const register: Register = on => {
 
         {Input && all.length ? (
           <Box key="filter-row" flexDirection="row" alignItems="center" columnGap={1}>
-            <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
+            <Box flexGrow={1} flexDirection="column" alignItems="stretch">{/* Input has no width prop: its column stretches it */}
+              <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
+            </Box>
             {q ? <Button key="clear-filter" label="Clear filter" plain dimColor onPress={() => update($, filter, () => '')}><Text>✕</Text></Button> : null}
           </Box>
         ) : null}

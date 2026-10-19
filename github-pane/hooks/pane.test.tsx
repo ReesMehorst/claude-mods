@@ -4,7 +4,7 @@ import type { On, RenderPropsOf } from 'claude-code'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 const PR = { number: 5, title: 'Add thing', isDraft: true, author: { login: 'ann' }, headRefName: 'feat', baseRefName: 'main', statusCheckRollup: [], updatedAt: '2026-10-19T11:00:00Z', url: 'https://github.com/o/r/pull/5' }
-const PROPS = { title: 'GitHub', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { top: 0, bodyRows: 40 } } as unknown as RenderPropsOf['Pane']
+const PROPS = { title: 'GitHub', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { top: 0, bodyRows: 40 } } as unknown as RenderPropsOf['Pane']
 
 const NOTIF = { id: '42', unread: true, reason: 'mention', updated_at: '2026-10-19T11:00:00Z', subject: { title: 'Ping', type: 'Issue', url: 'https://api.github.com/repos/o/r/issues/3' } }
 const RUN = { databaseId: 9, status: 'completed', conclusion: 'failure', displayTitle: 'CI run', workflowName: 'CI', headBranch: 'feat', createdAt: '2026-10-19T11:00:00Z', url: 'https://github.com/o/r/actions/runs/9' }
