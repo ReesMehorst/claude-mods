@@ -44,6 +44,7 @@ export const prRow = (p: any, now: number): Row => {
     isFailed: c === FAIL,
     isDraft: !!p.isDraft,
     author: p.author?.login,
+    decision: p.reviewDecision || undefined,
   }
 }
 
@@ -62,6 +63,7 @@ export const runRow = (r: any, now: number): Row => {
     age: ago(r.createdAt, now),
     url: r.url,
     isFailed: s === FAIL,
+    isPending: s === PENDING,
   }
 }
 
@@ -79,9 +81,24 @@ export const issueRow = (i: any, now: number): Row => ({
   isFailed: false,
 })
 
-// PRs whose checks just turned red since the last poll (first poll: none).
-export const newlyFailed = (prev: Map<number, boolean> | null, rows: Row[]) =>
-  prev ? rows.filter(r => r.isFailed && prev.get(r.id) === false) : []
+// What one poll saw, for toasts: all PRs, PRs asking your review, your PRs, runs on your PRs' branches.
+export type Seen = { prs: Row[]; asked: Row[]; authored: Row[]; runs: Row[] }
+
+// Toast texts for what changed since the last poll (first poll: none, so a reload never replays).
+export const toasts = (prev: Seen | null, next: Seen): string[] => {
+  if (!prev) return []
+  const was = (list: Row[], r: Row) => list.find(p => p.id === r.id)
+  return [
+    ...next.prs.filter(r => r.isFailed && was(prev.prs, r)?.isFailed === false)
+      .map(r => `✗ Checks failed on #${r.id}: ${r.title}`),
+    ...next.asked.filter(r => !was(prev.asked, r))
+      .map(r => `Review requested on #${r.id}: ${r.title}`),
+    ...next.authored.filter(r => { const p = was(prev.authored, r); return r.decision === 'APPROVED' && p && p.decision !== 'APPROVED' })
+      .map(r => `✓ Approved #${r.id}: ${r.title}`),
+    ...next.runs.filter(r => !r.isPending && was(prev.runs, r)?.isPending)
+      .map(r => `${r.isFailed ? '✗' : '✓'} Run finished: ${r.title} (${r.sub})`),
+  ]
+}
 
 // Failed-log tail: drop the "job\tstep\t" prefix gh puts on each line.
 export const logTail = (raw: string, lines = 30) =>

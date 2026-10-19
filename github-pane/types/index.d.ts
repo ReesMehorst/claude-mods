@@ -13,6 +13,8 @@ export type Row = {
   isFailed: boolean
   isDraft?: boolean // PRs only
   author?: string // PRs only: login
+  decision?: string // PRs only: raw reviewDecision
+  isPending?: boolean // runs only: not completed
 }
 export type Snapshot = {
   repo: string | null

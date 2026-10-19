@@ -1,6 +1,6 @@
 # github-pane expansion: handoff
 
-The plan has four phases. Phase 1 is merged, phase 2 is in review; phases 3–4 are open.
+The plan has four phases. Phases 1 and 2 are merged, phase 3 is in review; phase 4 is open.
 Each phase is one PR off `main`, version bumped, README updated.
 
 ## Where things stand
@@ -8,10 +8,14 @@ Each phase is one PR off `main`, version bumped, README updated.
 - **Phase 1**: merged in [PR #3](https://github.com/ReesMehorst/claude-mods/pull/3), version 0.2.0.
   - Still open: a live check. Open `/github`, check the "This branch" row,
     close the pane, and confirm polling stops.
-- **Phase 2**: done, version 0.3.0, branch `claude/loving-kirch-6575ed`.
+- **Phase 2**: merged in [PR #4](https://github.com/ReesMehorst/claude-mods/pull/4), version 0.3.0.
   - Still open: a live check on a throwaway test PR: `d`, `a`, `y`, and `m` twice.
-- **Phases 3–4**: not started. Branch each one off `main` once phase 2 merges, or off
-  the phase 2 branch if it hasn't merged yet.
+- **Phase 3**: done, version 0.4.0, branch `github-pane-phase3`.
+  - "Your run" means a run on the head branch of one of your open PRs (no extra
+    `gh` call). Pushes without a PR toast nothing; add `--user <login>` if wanted.
+  - Still open: a live check that each toast fires once.
+- **Phase 4**: not started. Branch off `main` once phase 3 merges, or off
+  `github-pane-phase3` if it hasn't.
 
 ## Code map
 
@@ -24,7 +28,7 @@ Each phase is one PR off `main`, version bumped, README updated.
   - `actions(r)` holds the per-row buttons. `rowView(r)` draws one row and is
     used by the tabs and by the "This branch" row.
 - `hooks/format.ts` holds pure helpers: row builders, `checks`, `nextDelay`,
-  `logTail`, `newlyFailed`. Put new logic here so it can be tested.
+  `logTail`, `toasts` (snapshot diff), `prDetail`, `confirmPress`. Put new logic here so it can be tested.
 - `hooks/format.test.ts` holds the tests (`claude-code/testing`).
 - `types/index.d.ts` holds the `Row`, `Snapshot` and `PluginState` contract.
   Every new atom key needs declaring here, or `validate` fails.
@@ -54,7 +58,7 @@ which names `.../plugin-authoring/types/claude-code.d.ts`. Write a scratch
   `--author @me` list.
 - `gh pr status` is wrapped in `.catch(() => null)`, so a detached HEAD only
   hides the row.
-- Module variables (`isOpen`, `timer`, `prevChecks`) reset on hot reload, while
+- Module variables (`isOpen`, `timer`, `prevSeen`, `viewer`) reset on hot reload, while
   atoms don't. `session.start` checks `$.ui.panes()` to resume polling.
 - A `hotkey` must be one digit or lowercase letter. `hotkey="escape"` passed
   validate and tsc, but the engine skipped the whole render, so the pane went
@@ -90,7 +94,7 @@ which names `.../plugin-authoring/types/claude-code.d.ts`. Write a scratch
 - **Done when:** the detail view shows for any PR, approve/ready/merge work on a
   test PR, and merge never runs on a single press.
 
-## Phase 3: More toasts
+## Phase 3: More toasts ✅
 
 **Goal:** you hear about changes that need you, the way you already do for red
 checks. These only fire while the pane is open, since phase 1 polls only then.
