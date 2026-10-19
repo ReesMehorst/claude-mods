@@ -16,6 +16,7 @@ export type Row = {
   decision?: string // PRs only: raw reviewDecision
   isPending?: boolean // runs only: not completed
   branch?: string // PRs and runs: head branch
+  base?: string // PRs only: base branch
 }
 export type Snapshot = {
   repo: string | null

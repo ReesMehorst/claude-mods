@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, confirmPress, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, notifUrl, prDetail, prRow, runRow, toasts } from './format'
+import { ago, checks, confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, notifUrl, prDetail, prRow, runRow, toasts } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -122,4 +122,17 @@ test('failedRunId and fixPrompt', () => {
     'CI failed on PR #7, run 3 (branch feat).\n```\nboom\n```\nFind and fix the cause of this CI failure.')
   const run = runRow({ databaseId: 9, status: 'completed', conclusion: 'failure', headBranch: 'main', createdAt: '2026-10-19T11:00:00Z' }, now)
   expect(fixPrompt(run, 9, 'x').split('\n')[0]).toBe('CI failed on run 9 (branch main).')
+})
+
+test('desktop row: draft pill replaces review, CI pill by tone, runs get one pill', () => {
+  const pr = { number: 7, title: 'Add pane', headRefName: 'feat', baseRefName: 'main', author: { login: 'rees' }, updatedAt: '2026-10-19T11:00:00Z', url: 'u' }
+  const draft = desktopRow(prRow({ ...pr, isDraft: true, reviewDecision: 'APPROVED', statusCheckRollup: [{ conclusion: 'FAILURE' }] }, now))
+  expect(draft.title).toBe('Add pane')
+  expect(draft.meta).toBe('#7 · feat → main · @rees')
+  expect(draft.pills).toEqual([{ text: 'Draft', tone: 'subtle' }, { text: 'CI failing', tone: 'error' }])
+  expect(desktopRow(prRow({ ...pr, reviewDecision: 'CHANGES_REQUESTED', statusCheckRollup: [] }, now)).pills)
+    .toEqual([{ text: 'Changes requested', tone: 'error' }, { text: 'No checks', tone: 'subtle' }])
+  expect(desktopRow(runRow({ databaseId: 1, status: 'in_progress', displayTitle: 'x', workflowName: 'CI', createdAt: '2026-10-19T11:00:00Z' }, now)).pills)
+    .toEqual([{ text: 'Running', tone: 'warning' }])
+  expect(desktopRow(issueRow({ number: 3, title: 'Bug', updatedAt: '2026-10-19T11:00:00Z', url: 'u' }, now)).pills).toEqual([])
 })

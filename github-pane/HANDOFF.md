@@ -8,14 +8,49 @@ The terminal look stays as it is.
 
 Each phase is one PR off `main`, version bumped, README updated if behaviour changes.
 
+## Mockups
+
+Canvas: https://claude.ai/artifact/EzzhBL1MTNa9qdHZExc1nb (private; one board per phase,
+plus the terminal look for reference). Hex colours there are illustrative only; the code
+uses theme tone names (`success`, `warning`, `error`, `subtle`) so dark mode follows.
+
+Decisions the mockups add to the phases below:
+
+- **Row pills:** review pill then CI pill. Review: Approved → success, Changes requested →
+  error, Review required → warning, Draft → subtle. CI: passing / failing / running / no
+  checks, same tones as the glyph. Runs get one pill (Passed / Failed / Running).
+- **Selected row:** tinted background (blue tint for PRs, red tint for a failed run); the
+  detail card hangs off its bottom edge (no top border, rounded bottom corners).
+- **Card header:** stat line (`+214 −37 · 5 files · 3 commits · Mergeable`) left, an icon-only
+  Close button (`aria-label`) right. Replaces the text "Close" button.
+- **One primary button per card:** PR → Merge; failed run → Rerun failed. Fix with Claude is
+  secondary with an accent border, not a second primary.
+- **Open on GitHub / Open run:** a secondary `Link` in the card's action row (`r.url`
+  already exists). Small; drop it if the row already opens on click.
+- **Merge confirm** replaces the detail card in place: "Squash-merge #n into `base`?",
+  sub line "Deletes branch `head` on GitHub and locally.", Cancel then Merge (success tone),
+  right-aligned.
+- **Filter:** sits between tabs and list, with a clear (×) button. While a query is set the
+  active tab's count reads `2 / 4` and a caption under the list says "2 of 4 match".
+  Highlighting the match inside titles is optional (nested `Text` with `backgroundColor`).
+- **Empty state:** a dashed-border card with a small icon, a bold line, one sentence, and
+  the link where one helps. Same card for every tab.
+- **Refresh error:** keep the last good rows, dimmed, under a "Stale" caption; the header
+  caption becomes "last good 21:14"; the bordered error box says what failed and when it
+  retries.
+- **Narrow pane (Phase 4):** `Select` labelled "View", counts inside option labels
+  (`Checks (2 failing)`); rows drop the branch from line 2 and keep one pill.
+- **Tabs:** the mockups draw Phase 4's segmented tabs on every board. Phases 1–3 can ship
+  with the existing native buttons; only the board look changes.
+
 ## What the desktop surface has
 
 From this build's API types (`plugin-authoring` skill → `types/claude-code.d.ts`,
 grep `desktop: {`):
 
 - **Elements:** `Box`, `Text`, `Button`, `Link`, `Input`, `Select`, `Svg`, `Code`,
-  `Markdown`, `Client`. The terminal table differs, so check with `'Markdown' in els`
-  (or `e.surface === 'desktop'`) before using one, and fall back to the current tree.
+  `Markdown`, `Client`. The terminal's table has `Markdown` and `Code` too, so branch on
+  `e.surface !== 'terminal'`, not on which elements exist, and keep the current tree there.
 - **Box:** `hover` (background/border on hover), `backgroundColor`, `borderStyle`,
   `borderColor`, `gap`, `padding*`, `width`/`minWidth`, `overflow`.
 - **Text:** `size` (`caption` … `title`), `weight`, `backgroundColor`, `tabular`,
@@ -113,9 +148,11 @@ Type-check: a scratch `tsconfig.json` outside the repo whose `files` list the AP
 with `jsx: react`, `jsxFactory: h`, `jsxFragmentFactory: Fragment`, `strict`, `noEmit`,
 `skipLibCheck`, `moduleResolution: bundler`. Run `npx -p typescript@5.6.3 tsc -p <it>`.
 
-Live check on desktop: from a repo with activity (MotoSphere has notifications and
-failed runs; claude-mods has neither), run
-`claude --plugin-dir C:/Users/MeesR/claude-mods/github-pane`, then `/github`.
+Live check on desktop: `claude --plugin-dir` opens the terminal CLI, not the desktop app.
+The desktop app runs the copy installed from the local `reesmehorst` marketplace, so bump
+the version, then run `/reload-plugins` (or `claude plugin update github-pane@reesmehorst`)
+and `/github` in a Code session on a repo with activity (MotoSphere has notifications and
+failed runs; claude-mods has neither).
 
 ## Gotchas
 
