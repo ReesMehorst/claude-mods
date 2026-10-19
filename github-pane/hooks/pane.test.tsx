@@ -61,8 +61,17 @@ test('pane draws on every surface; details, ready, two-press merge', async ($, o
     expect(await ui.find({ key: 'ready' })).toBeDefined()
     await ui.press({ key: 'merge' })
     expect(ran.some(a => a[1] === 'merge')).toBe(false)
-    expect(await ui.find({ text: /Press m again/ })).toBeDefined()
-    await ui.press({ key: 'merge' })
+    if (surface === 'desktop') {
+      expect(await ui.find({ text: /Squash-merge #5 into main\?/ })).toBeDefined()
+      expect(await ui.find({ key: 'merge' })).toBeUndefined() // the card replaces the actions
+      await ui.press({ key: 'cancel-merge' })
+      expect(await ui.find({ key: 'merge-confirm' })).toBeUndefined()
+      await ui.press({ key: 'merge' })
+      await ui.press({ key: 'confirm-merge' })
+    } else {
+      expect(await ui.find({ text: /Press m again/ })).toBeDefined()
+      await ui.press({ key: 'merge' })
+    }
     expect(ran.some(a => a[1] === 'merge')).toBe(true)
     await ui.press({ key: 'row-pr-5' }) // deselect for the next surface
     await ui.unmount()
@@ -97,5 +106,22 @@ test('desktop: failed log in a code block under the run', async ($, on) => {
   expect(await ui.find({ key: 'card-run-9' })).toBeDefined()
   await ui.press({ key: 'log' })
   expect(await ui.find({ type: 'Code' })).toMatchObject({ props: { source: 'boom' } })
+  await ui.unmount()
+})
+
+test('desktop: filter narrows the tab, tab change clears it; empty tabs say why', async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
+  await ui.input({ key: 'filter', text: 'zzz', kind: 'change' })
+  expect(await ui.find({ text: /Add thing/ })).toBeUndefined()
+  expect(await ui.find({ text: /No matches/ })).toBeDefined()
+  expect(await ui.find({ text: /Pull requests 0 \/ 1/ })).toBeDefined()
+  await ui.input({ key: 'filter', text: 'FEAT', kind: 'change' })
+  expect(await ui.find({ text: /Add thing/ })).toBeDefined()
+  expect(await ui.find({ text: /1 of 1 match/ })).toBeDefined()
+  await ui.press({ key: 'tab-issues' })
+  expect(await ui.find({ text: /No open issues in this repo\./ })).toBeDefined()
+  await ui.press({ key: 'tab-prs' })
+  expect(await ui.find({ text: /Pull requests 1$/ })).toBeDefined() // filter cleared
   await ui.unmount()
 })
