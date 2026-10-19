@@ -11,6 +11,8 @@ export type Row = {
   age: string
   url: string
   isFailed: boolean
+  isDraft?: boolean // PRs only
+  author?: string // PRs only: login
 }
 export type Snapshot = {
   repo: string | null
@@ -22,6 +24,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'github-pane': { snap: Snapshot; tab: Tab; selected: string | null; detail: string | null; busy: string | null }
+    'github-pane': { snap: Snapshot; tab: Tab; selected: string | null; detail: string | null; busy: string | null; confirm: string | null }
   }
 }

@@ -2,11 +2,12 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Row, Snapshot, Tab } from '../types'
-import { issueRow, logTail, newlyFailed, nextDelay, prRow, runRow } from './format'
+import { confirmPress, issueRow, logTail, newlyFailed, nextDelay, prDetail, prRow, runRow } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
 const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me']]
+const DETAIL_FIELDS = 'body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles'
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
 const ISSUE_FIELDS = 'number,title,labels,assignees,updatedAt,url'
 const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [] }, here: null, at: 0, error: null }
@@ -16,6 +17,7 @@ const tab = atom({ plugin: 'github-pane', key: 'tab' } as const, 'prs' as Tab)
 const selected = atom({ plugin: 'github-pane', key: 'selected' } as const, null as string | null)
 const detail = atom({ plugin: 'github-pane', key: 'detail' } as const, null as string | null)
 const busy = atom({ plugin: 'github-pane', key: 'busy' } as const, null as string | null)
+const confirm = atom({ plugin: 'github-pane', key: 'confirm' } as const, null as string | null) // row key armed for merge
 
 type $ = EngineInterface
 
@@ -31,6 +33,7 @@ let isRefreshing = false
 let isOpen = false // polls only while the pane is open
 let timer: Timer | null = null
 let delay = EVERY_MS
+let viewer: string | null = null // your login, fetched once; hides Approve on your own PRs
 
 // Refreshes now, then schedules the next poll by the result (backoff, or stop when retrying can't help).
 async function poll($: $) {
@@ -49,7 +52,7 @@ async function refresh($: $): Promise<string | null> {
   try {
     const repo = (await ghJson($, ['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner as string
     const now = await $.clock.now()
-    const [prs, runs, issues, review, authored, assigned, status] = await Promise.all([
+    const [prs, runs, issues, review, authored, assigned, status, login] = await Promise.all([
       ghJson($, ['pr', 'list', '-L', '30', '--json', PR_FIELDS]),
       ghJson($, ['run', 'list', '-L', '20', '--json', 'databaseId,displayTitle,status,conclusion,workflowName,headBranch,event,createdAt,url']),
       ghJson($, ['issue', 'list', '-L', '30', '--json', ISSUE_FIELDS]),
@@ -57,7 +60,9 @@ async function refresh($: $): Promise<string | null> {
       ghJson($, ['pr', 'list', '--author', '@me', '--json', PR_FIELDS]),
       ghJson($, ['issue', 'list', '--assignee', '@me', '--json', ISSUE_FIELDS]),
       ghJson($, ['pr', 'status', '--json', PR_FIELDS]).catch(() => null), // detached HEAD etc.: no header, not an error
+      viewer ?? gh($, ['api', 'user', '-q', '.login']).then(o => o.trim() || null, () => null),
     ])
+    viewer = login
     const cur = status?.currentBranch
     const prRows = prs.map((p: any) => prRow(p, now))
     const mine = [...review, ...authored].map((p: any) => prRow(p, now))
@@ -86,12 +91,12 @@ async function refresh($: $): Promise<string | null> {
 }
 
 // Runs a row action, shows its output (or error) in the detail box.
-async function act($: $, label: string, args: string[], show: (out: string) => string) {
+async function act($: $, label: string, args: string[], show: (out: string) => string, refreshAfter = true) {
   await update($, busy, () => label)
   try {
     const out = await gh($, args, 120_000)
     await update($, detail, () => show(out))
-    void poll($)
+    if (refreshAfter) void poll($)
   } catch (err: any) {
     await update($, detail, () => `${label} failed: ${err?.message ?? err}`)
   } finally {
@@ -126,9 +131,15 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
-    const [s, t, sel, det, work] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy)])
+    const [s, t, sel, det, work, armed] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm)])
     const rows = s.rows[t]
-    const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null)])
+    const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
+    const merge = async (r: Row) => {
+      const c = confirmPress(armed, r.key)
+      await update($, confirm, () => c.armed)
+      if (!c.run) return update($, detail, () => `Press m again to squash-merge #${r.id} and delete its branch.`)
+      return act($, `Merge #${r.id}`, ['pr', 'merge', String(r.id), '--squash', '--delete-branch'], o => o.trim() || `Merged #${r.id}`)
+    }
     const time = s.at ? new Date(s.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : null
 
     const actions = (r: Row) => (
@@ -136,6 +147,18 @@ export const register: Register = on => {
         <Link href={r.url}>Open on GitHub</Link>
         {r.kind === 'pr' ? (
           <Button key="checkout" hotkey="c" onPress={() => act($, `Checkout #${r.id}`, ['pr', 'checkout', String(r.id)], o => o.trim() || `Checked out #${r.id}`)}>Checkout</Button>
+        ) : null}
+        {r.kind === 'pr' ? (
+          <Button key="details" hotkey="d" onPress={() => act($, `Details #${r.id}`, ['pr', 'view', String(r.id), '--json', DETAIL_FIELDS], o => prDetail(JSON.parse(o)), false)}>Details</Button>
+        ) : null}
+        {r.kind === 'pr' && viewer && r.author !== viewer ? (
+          <Button key="approve" hotkey="a" onPress={() => act($, `Approve #${r.id}`, ['pr', 'review', String(r.id), '--approve'], o => o.trim() || `Approved #${r.id}`)}>Approve</Button>
+        ) : null}
+        {r.kind === 'pr' && r.isDraft ? (
+          <Button key="ready" hotkey="y" onPress={() => act($, `Ready #${r.id}`, ['pr', 'ready', String(r.id)], o => o.trim() || `#${r.id} marked ready for review`)}>Ready</Button>
+        ) : null}
+        {r.kind === 'pr' ? (
+          <Button key="merge" hotkey="m" variant={armed === r.key ? 'primary' : 'secondary'} onPress={() => merge(r)}>{armed === r.key ? 'Confirm merge' : 'Merge'}</Button>
         ) : null}
         {r.kind === 'run' && r.isFailed ? (
           <Button key="rerun" hotkey="x" onPress={() => act($, 'Rerun', ['run', 'rerun', String(r.id), '--failed'], () => `Rerunning failed jobs of run ${r.id}`)}>Rerun failed</Button>
@@ -196,7 +219,7 @@ export const register: Register = on => {
         {det ? (
           <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
             <Text mono wrap="wrap">{det}</Text>
-            <Button key="close-detail" hotkey="escape" plain dimColor onPress={() => update($, detail, () => null)}>Close</Button>
+            <Button key="close-detail" plain dimColor onPress={() => Promise.all([update($, detail, () => null), update($, confirm, () => null)])}>Close</Button>
           </Box>
         ) : null}
       </Box>
