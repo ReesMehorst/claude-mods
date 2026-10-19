@@ -1,6 +1,6 @@
 # github-pane expansion: handoff
 
-The plan has four phases. Phase 1 is merged, phases 2 and 3 are in review; phase 4 is open.
+The plan has four phases. Phases 1 and 2 are merged, phase 3 is in review; phase 4 is open.
 Each phase is one PR off `main`, version bumped, README updated.
 
 ## Where things stand
@@ -8,14 +8,14 @@ Each phase is one PR off `main`, version bumped, README updated.
 - **Phase 1**: merged in [PR #3](https://github.com/ReesMehorst/claude-mods/pull/3), version 0.2.0.
   - Still open: a live check. Open `/github`, check the "This branch" row,
     close the pane, and confirm polling stops.
-- **Phase 2**: done, version 0.3.0, in [PR #4](https://github.com/ReesMehorst/claude-mods/pull/4) on branch `claude/loving-kirch-6575ed`.
+- **Phase 2**: merged in [PR #4](https://github.com/ReesMehorst/claude-mods/pull/4), version 0.3.0.
   - Still open: a live check on a throwaway test PR: `d`, `a`, `y`, and `m` twice.
-- **Phase 3**: done, version 0.4.0, branch `github-pane-phase3` (off phase 2).
+- **Phase 3**: done, version 0.4.0, branch `github-pane-phase3`.
   - "Your run" means a run on the head branch of one of your open PRs (no extra
     `gh` call). Pushes without a PR toast nothing; add `--user <login>` if wanted.
   - Still open: a live check that each toast fires once.
-- **Phase 4**: not started. Branch off `main` once 2 and 3 merge, or off
-  `github-pane-phase3` if they haven't.
+- **Phase 4**: not started. Branch off `main` once phase 3 merges, or off
+  `github-pane-phase3` if it hasn't.
 
 ## Code map
 
