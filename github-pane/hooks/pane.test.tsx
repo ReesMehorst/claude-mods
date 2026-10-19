@@ -7,7 +7,7 @@ const PR = { number: 5, title: 'Add thing', isDraft: true, author: { login: 'ann
 const PROPS = { title: 'GitHub', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { top: 0, bodyRows: 40 } } as unknown as RenderPropsOf['Pane']
 
 const NOTIF = { id: '42', unread: true, reason: 'mention', updated_at: '2026-10-19T11:00:00Z', subject: { title: 'Ping', type: 'Issue', url: 'https://api.github.com/repos/o/r/issues/3' } }
-const RUN = { databaseId: 9, status: 'completed', conclusion: 'failure', displayTitle: 'CI run', workflowName: 'CI', headBranch: 'feat', createdAt: '2026-10-19T11:00:00Z', url: 'u' }
+const RUN = { databaseId: 9, status: 'completed', conclusion: 'failure', displayTitle: 'CI run', workflowName: 'CI', headBranch: 'feat', createdAt: '2026-10-19T11:00:00Z', url: 'https://github.com/o/r/actions/runs/9' }
 
 const ran: string[][] = []
 const filled: string[] = []
@@ -56,6 +56,7 @@ test('pane draws on every surface; details, ready, two-press merge', async ($, o
     await ui.press({ key: 'row-pr-5' })
     await ui.press({ key: 'details' })
     expect(await ui.find({ text: /\+1 −2 · 3 files/ })).toBeDefined()
+    if (surface === 'desktop') expect(await ui.find({ key: 'pr-body' })).toBeDefined() // body as Markdown
     expect(await ui.find({ key: 'approve' })).toBeDefined() // ann's PR, viewer is me
     expect(await ui.find({ key: 'ready' })).toBeDefined()
     await ui.press({ key: 'merge' })
@@ -84,5 +85,17 @@ test('notifications tab marks read; fix fills the prompt box without sending', a
   expect(filled.at(-1)).toContain('CI failed on run 9 (branch feat).')
   expect(filled.at(-1)).toContain('boom')
   expect(await ui.find({ text: /prompt box/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('desktop: failed log in a code block under the run', async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
+  await ui.press({ key: 'tab-checks' })
+  expect(await ui.find({ text: /CI run/ })).toBeDefined()
+  await ui.press({ key: 'row-run-9' })
+  expect(await ui.find({ key: 'card-run-9' })).toBeDefined()
+  await ui.press({ key: 'log' })
+  expect(await ui.find({ type: 'Code' })).toMatchObject({ props: { source: 'boom' } })
   await ui.unmount()
 })

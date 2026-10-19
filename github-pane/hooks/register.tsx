@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Row, Snapshot, Tab } from '../types'
+import type { Detail, PrParts, Row, Snapshot, Tab, Tone } from '../types'
 import type { Pill, Seen } from './format'
-import { confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, prDetail, prRow, runRow, toasts } from './format'
+import { confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, prDetail, prRow, prText, runRow, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
@@ -14,12 +14,13 @@ const ISSUE_FIELDS = 'number,title,labels,assignees,updatedAt,url'
 // shortcut: raw translucent tints read on light and dark; swap for theme keys if the desktop theme gets row-tint ones
 const HOVER_BG = 'rgba(127,127,127,0.12)'
 const SELECTED_BG = 'rgba(70,120,220,0.16)'
+const PILL_BG: Record<Tone, string> = { success: 'rgba(46,160,67,0.2)', error: 'rgba(218,54,51,0.2)', warning: 'rgba(210,153,34,0.22)', subtle: 'rgba(127,127,127,0.2)' }
 const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [], notifs: [] }, here: null, at: 0, error: null }
 
 const snap = atom({ plugin: 'github-pane', key: 'snap' } as const, EMPTY)
 const tab = atom({ plugin: 'github-pane', key: 'tab' } as const, 'prs' as Tab)
 const selected = atom({ plugin: 'github-pane', key: 'selected' } as const, null as string | null)
-const detail = atom({ plugin: 'github-pane', key: 'detail' } as const, null as string | null)
+const detail = atom({ plugin: 'github-pane', key: 'detail' } as const, null as Detail | null)
 const busy = atom({ plugin: 'github-pane', key: 'busy' } as const, null as string | null)
 const confirm = atom({ plugin: 'github-pane', key: 'confirm' } as const, null as string | null) // row key armed for merge
 
@@ -27,7 +28,9 @@ type $ = EngineInterface
 
 async function gh($: $, args: string[], timeoutMs = 30_000) {
   const r = await $.process.run(['gh', ...args], { timeoutMs })
-  if (r.exitCode !== 0) throw new Error(r.stderr.trim().split('\n')[0] || `gh exited ${r.exitCode}`)
+  // gh pr checks exits 1 or 8 on failing or pending checks; its stdout is still the answer
+  const isChecks = args[0] === 'pr' && args[1] === 'checks' && !!r.stdout.trim()
+  if (r.exitCode !== 0 && !isChecks) throw new Error(r.stderr.trim().split('\n')[0] || `gh exited ${r.exitCode}`)
   return r.stdout
 }
 const ghJson = async ($: $, args: string[]) => JSON.parse(await gh($, args))
@@ -102,14 +105,15 @@ async function refresh($: $): Promise<string | null> {
 }
 
 // Runs a row action, shows its output (or error) in the detail box.
-async function act($: $, label: string, args: string[], show: (out: string) => string, refreshAfter = true) {
+async function act($: $, label: string, args: string[], show: (out: string) => string | Detail, refreshAfter = true) {
   await update($, busy, () => label)
   try {
     const out = await gh($, args, 120_000)
-    await update($, detail, () => show(out))
+    const d = show(out)
+    await update($, detail, () => typeof d === 'string' ? { text: d } : d)
     if (refreshAfter) void poll($)
   } catch (err: any) {
-    await update($, detail, () => `${label} failed: ${err?.message ?? err}`)
+    await update($, detail, () => ({ text: `${label} failed: ${err?.message ?? err}` }))
   } finally {
     await update($, busy, () => null)
   }
@@ -128,9 +132,9 @@ async function fix($: $, r: Row) {
     }
     const log = await gh($, ['run', 'view', String(runId), '--log-failed'], 120_000)
     const res = await $.prompt.fill({ text: fixPrompt(r, runId, log) })
-    await update($, detail, () => res.isFilled ? 'Fix request is in the prompt box: edit it, then press Enter to send.' : `Couldn't fill the prompt box${res.refusal ? ` (${res.refusal})` : ''}.`)
+    await update($, detail, () => ({ text: res.isFilled ? 'Fix request is in the prompt box: edit it, then press Enter to send.' : `Couldn't fill the prompt box${res.refusal ? ` (${res.refusal})` : ''}.` }))
   } catch (err: any) {
-    await update($, detail, () => `Fix failed: ${err?.message ?? err}`)
+    await update($, detail, () => ({ text: `Fix failed: ${err?.message ?? err}` }))
   } finally {
     await update($, busy, () => null)
   }
@@ -162,7 +166,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const { Box, Text, Button, Link, Code, Markdown } = $.ui.resolve(e)
     const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
     const [s, t, sel, det, work, armed] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm)])
     const rows = s.rows[t]
@@ -170,19 +174,19 @@ export const register: Register = on => {
     const merge = async (r: Row) => {
       const c = confirmPress(armed, r.key)
       await update($, confirm, () => c.armed)
-      if (!c.run) return update($, detail, () => `Press m again to squash-merge #${r.id} and delete its branch.`)
+      if (!c.run) return update($, detail, () => ({ text: `Press m again to squash-merge #${r.id} and delete its branch.` }))
       return act($, `Merge #${r.id}`, ['pr', 'merge', String(r.id), '--squash', '--delete-branch'], o => o.trim() || `Merged #${r.id}`)
     }
     const time = s.at ? new Date(s.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : null
 
     const actions = (r: Row) => (
-      <Box key={`act-${r.key}`} flexDirection="row" flexWrap="wrap" columnGap={2} paddingLeft={4}>
+      <Box key={`act-${r.key}`} flexDirection="row" flexWrap="wrap" columnGap={2} rowGap="xs" paddingLeft={isApp ? 0 : 4} alignItems="center">
         <Link href={r.url}>Open on GitHub</Link>
         {r.kind === 'pr' ? (
           <Button key="checkout" hotkey="c" onPress={() => act($, `Checkout #${r.id}`, ['pr', 'checkout', String(r.id)], o => o.trim() || `Checked out #${r.id}`)}>Checkout</Button>
         ) : null}
         {r.kind === 'pr' ? (
-          <Button key="details" hotkey="d" onPress={() => act($, `Details #${r.id}`, ['pr', 'view', String(r.id), '--json', DETAIL_FIELDS], o => prDetail(JSON.parse(o)), false)}>Details</Button>
+          <Button key="details" hotkey="d" onPress={() => act($, `Details #${r.id}`, ['pr', 'view', String(r.id), '--json', DETAIL_FIELDS], o => { const pr = prDetail(JSON.parse(o)); return { text: prText(pr), pr } }, false)}>Details</Button>
         ) : null}
         {r.kind === 'pr' && viewer && r.author !== viewer ? (
           <Button key="approve" hotkey="a" onPress={() => act($, `Approve #${r.id}`, ['pr', 'review', String(r.id), '--approve'], o => o.trim() || `Approved #${r.id}`)}>Approve</Button>
@@ -191,13 +195,13 @@ export const register: Register = on => {
           <Button key="ready" hotkey="y" onPress={() => act($, `Ready #${r.id}`, ['pr', 'ready', String(r.id)], o => o.trim() || `#${r.id} marked ready for review`)}>Ready</Button>
         ) : null}
         {r.kind === 'pr' ? (
-          <Button key="merge" hotkey="m" variant={armed === r.key ? 'primary' : 'secondary'} onPress={() => merge(r)}>{armed === r.key ? 'Confirm merge' : 'Merge'}</Button>
+          <Button key="merge" hotkey="m" variant={isApp || armed === r.key ? 'primary' : 'secondary'} onPress={() => merge(r)}>{armed === r.key ? 'Confirm merge' : 'Merge'}</Button>
         ) : null}
         {r.kind === 'run' && r.isFailed ? (
-          <Button key="rerun" hotkey="x" onPress={() => act($, 'Rerun', ['run', 'rerun', String(r.id), '--failed'], () => `Rerunning failed jobs of run ${r.id}`)}>Rerun failed</Button>
+          <Button key="rerun" hotkey="x" variant={isApp ? 'primary' : undefined} onPress={() => act($, 'Rerun', ['run', 'rerun', String(r.id), '--failed'], () => `Rerunning failed jobs of run ${r.id}`)}>Rerun failed</Button>
         ) : null}
         {r.kind === 'run' && r.isFailed ? (
-          <Button key="log" hotkey="l" onPress={() => act($, 'Failed log', ['run', 'view', String(r.id), '--log-failed'], o => logTail(o) || 'No failed-step log.')}>Failed log</Button>
+          <Button key="log" hotkey="l" onPress={() => act($, 'Failed log', ['run', 'view', String(r.id), '--log-failed'], o => { const t = logTail(o); return { text: t || 'No failed-step log.', code: !!t } })}>Failed log</Button>
         ) : null}
         {(r.kind === 'run' || r.kind === 'pr') && r.isFailed ? (
           <Button key="fix" hotkey="f" onPress={() => fix($, r)}>Fix with Claude</Button>
@@ -206,7 +210,7 @@ export const register: Register = on => {
           <Button key="read" hotkey="e" onPress={() => act($, 'Mark read', ['api', '-X', 'PATCH', `notifications/threads/${r.id}`], () => 'Marked read')}>Mark read</Button>
         ) : null}
         {r.kind === 'pr' && r.isFailed ? (
-          <Button key="prchecks" hotkey="l" onPress={() => act($, 'Checks', ['pr', 'checks', String(r.id)], o => o.trim())}>Show checks</Button>
+          <Button key="prchecks" hotkey="l" onPress={() => act($, 'Checks', ['pr', 'checks', String(r.id)], o => ({ text: o.trim(), code: true }))}>Show checks</Button>
         ) : null}
       </Box>
     )
@@ -222,18 +226,47 @@ export const register: Register = on => {
       </Box>
     )
 
-    const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={p.tone} color="inverseText">{` ${p.text} `}</Text>
+    const closeDetail = () => Promise.all([update($, detail, () => null), update($, confirm, () => null)])
+    const prParts = (d: PrParts) => (
+      <Box key="pr-parts" flexDirection="column" rowGap={1}>
+        {d.reviewers.length ? (
+          <Box key="reviewers" flexDirection="column">
+            {d.reviewers.map(v => (
+              <Box key={`rev-${v.who}`} flexDirection="row" columnGap={1}>
+                <Text size="caption">{v.who}</Text>
+                {pill({ text: v.text, tone: v.tone })}
+              </Box>
+            ))}
+          </Box>
+        ) : <Text size="caption" dimColor>No reviewers.</Text>}
+        {d.body ? <Markdown key="pr-body" text={d.body} /> : <Text dimColor>No description.</Text>}
+      </Box>
+    )
+    // Desktop detail: header (PR stat line, icon close), then the PR parts, a code block or plain text.
+    const appDetail = (d: Detail) => (
+      <Box key="detail" flexDirection="column" rowGap="xs" paddingTop="xs">
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
+          <Text size="caption" dimColor tabular wrap="truncate-end">{d.pr ? `${d.pr.stat} · ${d.pr.merge}` : ''}</Text>
+          <Button key="close-detail" label="Close details" plain dimColor onPress={closeDetail}>✕</Button>
+        </Box>
+        {d.pr ? prParts(d.pr) : d.code ? <Code source={d.text} wrap="wrap" /> : <Text wrap="wrap">{d.text}</Text>}
+      </Box>
+    )
+
+    const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={PILL_BG[p.tone]} color={p.tone}>{` ${p.text} `}</Text>
     const appRowView = (r: Row) => {
       const d = desktopRow(r)
       return (
-        <Box key={r.key} flexDirection="column">
-          <Box key={`box-${r.key}`} flexDirection="column" paddingX={1} paddingY="xs"
-            backgroundColor={sel === r.key ? SELECTED_BG : undefined} hover={{ backgroundColor: sel === r.key ? SELECTED_BG : HOVER_BG }}>
+        <Box key={r.key} flexDirection="column" backgroundColor={sel === r.key ? SELECTED_BG : undefined}>
+          <Box key={`box-${r.key}`} flexDirection="column" paddingX={1} paddingY="xs" hover={{ backgroundColor: sel === r.key ? SELECTED_BG : HOVER_BG }}>
             <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
-              <Button key={`row-${r.key}`} plain onPress={() => pick(sel === r.key ? null : r.key)}>
-                <Text color={r.tone}>{`${r.glyph} `}</Text>
-                <Text weight="medium" wrap="truncate-end">{d.title}</Text>
-              </Button>
+              {/* glyph outside the Button: the desktop draws a Button's label in one colour */}
+              <Box flexDirection="row" columnGap={1}>
+                <Text color={r.tone}>{r.glyph}</Text>
+                <Button key={`row-${r.key}`} plain onPress={() => pick(sel === r.key ? null : r.key)}>
+                  <Text weight="medium" wrap="truncate-end">{d.title}</Text>
+                </Button>
+              </Box>
               <Text size="caption" dimColor tabular>{r.age}</Text>
             </Box>
             <Box flexDirection="row" columnGap={1} paddingLeft={2}>
@@ -241,7 +274,12 @@ export const register: Register = on => {
               {d.pills.map(pill)}
             </Box>
           </Box>
-          {sel === r.key ? actions(r) : null}
+          {sel === r.key ? (
+            <Box key={`card-${r.key}`} flexDirection="column" rowGap={1} borderStyle="round" borderColor="subtle" paddingX={1} marginX={1} marginBottom="xs">
+              {det ? appDetail(det) : null}
+              {actions(r)}
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -294,10 +332,12 @@ export const register: Register = on => {
           {rows.map(row)}
         </Box>
 
-        {det ? (
+        {det && isApp && !(s.here?.key === sel || rows.some(r => r.key === sel)) ? (
+          <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>{appDetail(det)}</Box>
+        ) : det && !isApp ? (
           <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
-            <Text mono wrap="wrap">{det}</Text>
-            <Button key="close-detail" plain dimColor onPress={() => Promise.all([update($, detail, () => null), update($, confirm, () => null)])}>Close</Button>
+            <Text mono wrap="wrap">{det.text}</Text>
+            <Button key="close-detail" plain dimColor onPress={closeDetail}>Close</Button>
           </Box>
         ) : null}
       </Box>

@@ -1,4 +1,4 @@
-import type { Row, Tone } from '../types'
+import type { PrParts, Row, Tone } from '../types'
 
 export const ago = (iso: string, now: number) => {
   const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
@@ -146,17 +146,29 @@ const FATAL = /not a git repository|no git remotes|none of the git remotes|gh au
 export const nextDelay = (prev: number, error: string | null, base: number) =>
   !error ? base : FATAL.test(error) ? null : Math.min(prev * 2, 600_000)
 
-// `gh pr view --json body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles` → detail text.
-export const prDetail = (p: any, bodyLines = 20) => {
+// `gh pr view --json body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles` → parts.
+export const prDetail = (p: any): PrParts => {
   const low = (x: unknown) => String(x ?? 'unknown').toLowerCase().replace(/_/g, ' ')
-  const reviewed = (p.latestReviews ?? []).map((r: any) => `  @${r.author?.login} ${low(r.state)}`)
-  const asked = (p.reviewRequests ?? []).map((r: any) => `  ${r.login ? `@${r.login}` : r.name ?? r.slug} requested`)
-  const body = String(p.body ?? '').trim().split(/\r?\n/)
+  const tone: Record<string, Tone> = { APPROVED: 'success', CHANGES_REQUESTED: 'error' }
+  return {
+    stat: `+${p.additions ?? 0} −${p.deletions ?? 0} · ${p.changedFiles ?? 0} files`,
+    merge: `${low(p.mergeable)} · ${low(p.mergeStateStatus)}`,
+    reviewers: [
+      ...(p.latestReviews ?? []).map((r: any) => ({ who: `@${r.author?.login}`, text: low(r.state), tone: tone[r.state] ?? 'subtle' })),
+      ...(p.reviewRequests ?? []).map((r: any) => ({ who: r.login ? `@${r.login}` : r.name ?? r.slug, text: 'requested', tone: 'warning' as Tone })),
+    ],
+    body: String(p.body ?? '').trim(),
+  }
+}
+
+// PR parts as one text, body clipped (the terminal draws this).
+export const prText = (d: PrParts, bodyLines = 20) => {
+  const body = d.body.split(/\r?\n/)
   const more = body.length - bodyLines
   return [
-    `+${p.additions ?? 0} −${p.deletions ?? 0} · ${p.changedFiles ?? 0} files`,
-    `${low(p.mergeable)} · ${low(p.mergeStateStatus)}`,
-    ...(reviewed.length + asked.length ? ['Reviewers:', ...reviewed, ...asked] : ['No reviewers.']),
+    d.stat,
+    d.merge,
+    ...(d.reviewers.length ? ['Reviewers:', ...d.reviewers.map(r => `  ${r.who} ${r.text}`)] : ['No reviewers.']),
     '',
     body[0] ? body.slice(0, bodyLines).join('\n') : 'No description.',
     ...(more > 0 ? [`… ${more} more lines`] : []),

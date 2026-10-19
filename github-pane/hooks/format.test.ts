@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, notifUrl, prDetail, prRow, runRow, toasts } from './format'
+import { ago, checks, confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, notifUrl, prDetail, prRow, prText, runRow, toasts } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -83,15 +83,22 @@ test('pr row carries draft flag and author', () => {
   expect(r.author).toBe('rees')
 })
 
-test('prDetail: stat, merge state, reviewers, clipped body', () => {
+test('prDetail parts; prText joins them with the body clipped', () => {
   const d = prDetail({
     additions: 12, deletions: 3, changedFiles: 4, mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED',
     latestReviews: [{ author: { login: 'ann' }, state: 'CHANGES_REQUESTED' }],
     reviewRequests: [{ login: 'bob' }, { name: 'core-team' }],
     body: 'a\r\nb\nc\nd',
-  }, 2)
-  expect(d).toBe('+12 −3 · 4 files\nmergeable · blocked\nReviewers:\n  @ann changes requested\n  @bob requested\n  core-team requested\n\na\nb\n… 2 more lines')
-  expect(prDetail({})).toBe('+0 −0 · 0 files\nunknown · unknown\nNo reviewers.\n\nNo description.')
+  })
+  expect(d.stat).toBe('+12 −3 · 4 files')
+  expect(d.merge).toBe('mergeable · blocked')
+  expect(d.reviewers).toEqual([
+    { who: '@ann', text: 'changes requested', tone: 'error' },
+    { who: '@bob', text: 'requested', tone: 'warning' },
+    { who: 'core-team', text: 'requested', tone: 'warning' },
+  ])
+  expect(prText(d, 2)).toBe('+12 −3 · 4 files\nmergeable · blocked\nReviewers:\n  @ann changes requested\n  @bob requested\n  core-team requested\n\na\nb\n… 2 more lines')
+  expect(prText(prDetail({}))).toBe('+0 −0 · 0 files\nunknown · unknown\nNo reviewers.\n\nNo description.')
 })
 
 test('confirmPress: merge never runs on a single press', () => {
