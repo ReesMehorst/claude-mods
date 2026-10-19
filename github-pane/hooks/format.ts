@@ -102,9 +102,19 @@ export const toasts = (prev: Seen | null, next: Seen): string[] => {
   ]
 }
 
-// Failed-log tail: drop the "job\tstep\t" prefix gh puts on each line.
-export const logTail = (raw: string, lines = 30) =>
-  raw.split(/\r?\n/).filter(Boolean).slice(-lines).map(l => l.split('\t').at(-1)!.replace(/^\S+Z /, '')).join('\n')
+// Failed-log tail: drop the "job\tstep\t" prefix gh puts on each line, ANSI colours,
+// and each job's "Post job cleanup." section (it buries the error).
+export const logTail = (raw: string, lines = 30) => {
+  let job = ''
+  let cleanup = false
+  return raw.split(/\r?\n/).filter(Boolean)
+    .filter(l => {
+      const j = l.split('\t')[0]
+      if (j !== job) { job = j; cleanup = false }
+      return !(cleanup ||= l.endsWith('Post job cleanup.'))
+    })
+    .slice(-lines).map(l => l.split('\t').at(-1)!.replace(/^\S+Z /, '').replace(/\x1b\[[\d;]*m/g, '')).join('\n')
+}
 
 // Errors a retry can't fix: no repo, no remote, gh missing or signed out.
 const FATAL = /not a git repository|no git remotes|none of the git remotes|gh auth login|not logged in|ENOENT|executable file not found|command not found/i
