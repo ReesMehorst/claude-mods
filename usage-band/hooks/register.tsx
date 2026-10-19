@@ -2,10 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionUsage } from 'claude-code'
 
 import type { Snapshot } from '../types'
-import { addUsage, bar, compactLine, emptyTokens, mode, segments, warnings } from './summarize'
+import { addUsage, bar, compactLine, emptyTokens, emptyTrend, mode, recordTurn, segments, warnings } from './summarize'
 
 const snap = atom({ plugin: 'usage-band', key: 'snap' } as const, null)
 const tokens = atom({ plugin: 'usage-band', key: 'tokens' } as const, emptyTokens)
+const trend = atom({ plugin: 'usage-band', key: 'trend' } as const, emptyTrend)
 const warned = atom({ plugin: 'usage-band', key: 'warned' } as const, [] as string[])
 const compact = atom({ plugin: 'usage-band', key: 'compact' } as const, false)
 
@@ -20,6 +21,7 @@ const build = (u: SessionUsage): Snapshot => ({
 
 export const register: Register = (on, options) => {
   const budget = Number(options.budgetUsd ?? 0)
+  const turnWarn = Number(options.turnWarnUsd ?? 0)
 
   on('session.start', async ($, e, next) => {
     const r = await next(e)
@@ -35,7 +37,7 @@ export const register: Register = (on, options) => {
     const s = build(await $.session.usage())
     await update($, snap, () => s)
     const seen = await read($, warned)
-    const fresh = warnings(s, await $.clock.now(), budget).filter(w => !seen.includes(w.key))
+    const fresh = warnings(s, await $.clock.now(), budget, await read($, trend)).filter(w => !seen.includes(w.key))
     for (const w of fresh) $.ui.toast(`⚠ ${w.text}`, { timeoutMs: 8000 })
     if (fresh.length) await update($, warned, ks => [...ks, ...fresh.map(w => w.key)])
     return next(e)
@@ -45,6 +47,11 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     const u = e.usage
     if (u) await update($, tokens, t => addUsage(t, u))
+    if (e.agentId) return r // ponytail: subagent turns would skew context growth
+    const s = build(await $.session.usage())
+    const t = await update($, trend, t => recordTurn(t, s.costUsd, s.contextTokens))
+    if (mode(s) === 'api' && turnWarn > 0 && (t.lastTurnUsd ?? 0) >= turnWarn)
+      $.ui.toast(`⚠ That turn cost $${t.lastTurnUsd!.toFixed(2)}`, { timeoutMs: 8000 })
     return r
   })
 
@@ -60,7 +67,7 @@ export const register: Register = (on, options) => {
     if (s === null || e.props.hasSurvey) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const m = mode(s)
-    const segs = segments(s, await read($, tokens), await $.clock.now(), budget)
+    const segs = segments(s, await read($, tokens), await $.clock.now(), budget, await read($, trend))
     const badge = <Text inverse bold color={m === 'plan' ? 'claude' : 'suggestion'}>{` ${m.toUpperCase()} `}</Text>
 
     if (await read($, compact)) {
