@@ -1,17 +1,17 @@
 # github-pane expansion: handoff
 
-The plan has four phases. Phases 1 and 2 are done and in review; phases 3–4 are open.
+The plan has four phases. Phase 1 is merged, phase 2 is in review; phases 3–4 are open.
 Each phase is one PR off `main`, version bumped, README updated.
 
 ## Where things stand
 
-- **Phase 1**: done, in [PR #3](https://github.com/ReesMehorst/claude-mods/pull/3) on branch `github-pane-phase1`, version 0.2.0.
+- **Phase 1**: merged in [PR #3](https://github.com/ReesMehorst/claude-mods/pull/3), version 0.2.0.
   - Still open: a live check. Open `/github`, check the "This branch" row,
     close the pane, and confirm polling stops.
-- **Phase 2**: done, version 0.3.0, branched off `github-pane-phase1`.
+- **Phase 2**: done, version 0.3.0, branch `claude/loving-kirch-6575ed`.
   - Still open: a live check on a throwaway test PR: `d`, `a`, `y`, and `m` twice.
-- **Phases 3–4**: not started. Branch each one off `main` after #3 merges, or off
-  the latest open phase branch if it hasn't merged yet.
+- **Phases 3–4**: not started. Branch each one off `main` once phase 2 merges, or off
+  the phase 2 branch if it hasn't merged yet.
 
 ## Code map
 
