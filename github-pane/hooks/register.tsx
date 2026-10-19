@@ -161,6 +161,14 @@ export const register: Register = on => {
     return { text: 'GitHub pane opened.' }
   })
 
+  // The filter field (filter-field.tsx) posts each edit as { q }.
+  on('ui.message', async ($, e, next) => {
+    const d = e.data as { q?: unknown }
+    if (e.requestId !== PANE || e.element !== 'filter' || typeof d?.q !== 'string') return next(e)
+    await update($, filter, () => d.q as string)
+    return {}
+  })
+
   on('ui.close', { id: PANE }, async ($, e, next) => {
     isOpen = false
     timer?.cancel()
@@ -176,8 +184,8 @@ export const register: Register = on => {
     const narrow = isApp && e.props.bodyColumns < NARROW_COLS
     const [s, t, sel, det, work, armed, q, isMenu] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter), read($, menu)])
     const all = s.rows[t]
-    const Input = isApp && 'Input' in els ? els.Input : null // the terminal keeps its tree; mobile has no field
-    const query = Input ? q : ''
+    const Client = isApp && 'Client' in els ? els.Client : null // the terminal keeps its tree; mobile and vscode have no Client
+    const query = Client ? q : ''
     const rows = all.filter(r => matches(r, query))
     const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
     const go = (id: Tab) => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => ''), update($, menu, () => false)])
@@ -396,9 +404,10 @@ export const register: Register = on => {
           <Box borderStyle="round" borderColor="error" paddingX={1}><Text color="error" wrap="wrap">{errorText}</Text></Box>
         ) : errorText ? <Text color="error">{errorText}</Text> : null}
 
-        {Input && all.length ? (
+        {Client && all.length ? (
           <Box key="filter-row" flexDirection="row" alignItems="center" columnGap={1}>
-            <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
+            {/* a Client, not an Input: the desktop draws a native Input at a fixed width */}
+            <Client key="filter" module="./filter-field.tsx" props={{ q }} flexGrow={1} />
             {q ? <Button key="clear-filter" label="Clear filter" plain dimColor onPress={() => update($, filter, () => '')}><Text>✕</Text></Button> : null}
           </Box>
         ) : null}

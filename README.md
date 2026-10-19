@@ -49,7 +49,7 @@ A band above the prompt that shows where your session stands.
   (not on your own PRs), `y` mark a draft ready, `m` squash-merge and delete the branch.
   Merge asks for a second `m` press; changing the selection or Close cancels it. In the
   desktop app the first press shows a confirm card with Merge and Cancel instead.
-- Desktop app: a **Filter** field above the list narrows the tab by title, `#n`, branch or
+- Desktop app: a full-width **Filter** field above the list (click it, then type; ctrl+U clears) narrows the tab by title, `#n`, branch or
   author; switching tabs clears it. An empty tab says why it is empty.
 - Refreshes every 60 s while the pane is open, with toasts when a PR's checks turn red,
   your review is requested, your PR is approved, or a run on your PR's branch finishes.
