@@ -31,12 +31,14 @@ A band above the prompt that shows where your session stands.
 
 `/github` opens a live pane for the repo you're in (needs the [`gh`](https://cli.github.com) CLI, signed in).
 
+- **This branch**: the PR for your checked-out branch, pinned above the tabs.
 - Tabs: **Pull requests**, **Checks** (workflow runs), **Issues**, **For me**
   (review requests, your PRs, issues assigned to you). Hotkeys `1`–`4`, `r` refresh.
 - Each row: CI status, title, branch → base, author, review state, age.
 - Select a row for actions: open on GitHub, `c` checkout a PR, `x` rerun failed jobs,
   `l` show the failed-step log inline.
-- Refreshes every 60 s; toasts when a PR's checks turn red.
+- Refreshes every 60 s while the pane is open; toasts when a PR's checks turn red.
+  Errors back off (up to 10 min); no repo or `gh` signed out pauses polling until `r`.
 
 ## Develop
 

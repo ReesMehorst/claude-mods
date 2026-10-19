@@ -15,6 +15,7 @@ export type Row = {
 export type Snapshot = {
   repo: string | null
   rows: Record<Tab, Row[]>
+  here: Row | null
   at: number
   error: string | null
 }
