@@ -219,7 +219,7 @@ export const register: Register = on => {
         {det ? (
           <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
             <Text mono wrap="wrap">{det}</Text>
-            <Button key="close-detail" hotkey="escape" plain dimColor onPress={() => Promise.all([update($, detail, () => null), update($, confirm, () => null)])}>Close</Button>
+            <Button key="close-detail" plain dimColor onPress={() => Promise.all([update($, detail, () => null), update($, confirm, () => null)])}>Close</Button>
           </Box>
         ) : null}
       </Box>

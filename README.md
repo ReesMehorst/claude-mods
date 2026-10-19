@@ -39,7 +39,7 @@ A band above the prompt that shows where your session stands.
   `l` show the failed-step log inline.
 - On a PR: `d` details (diff stat, mergeable state, reviewers, description), `a` approve
   (not on your own PRs), `y` mark a draft ready, `m` squash-merge and delete the branch.
-  Merge asks for a second `m` press; changing the selection or `escape` cancels it.
+  Merge asks for a second `m` press; changing the selection or Close cancels it.
 - Refreshes every 60 s while the pane is open; toasts when a PR's checks turn red.
   Errors back off (up to 10 min); no repo or `gh` signed out pauses polling until `r`.
 

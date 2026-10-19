@@ -56,10 +56,14 @@ which names `.../plugin-authoring/types/claude-code.d.ts`. Write a scratch
   hides the row.
 - Module variables (`isOpen`, `timer`, `prevChecks`) reset on hot reload, while
   atoms don't. `session.start` checks `$.ui.panes()` to resume polling.
+- A `hotkey` must be one digit or lowercase letter. `hotkey="escape"` passed
+  validate and tsc, but the engine skipped the whole render, so the pane went
+  blank whenever the detail box showed. `hooks/pane.test.tsx` now mounts the
+  pane on desktop and terminal to catch that.
 - `validate` notes "gating hook without .catch: ui.close". This is harmless,
   because the hook can't throw.
 - Hotkeys already taken: `1`–`4` (tabs), `r` (refresh), `c` (checkout), `x` (rerun),
-  `l` (failed log / show checks), `escape` (close detail), and from phase 2 `d` (details),
+  `l` (failed log / show checks), and from phase 2 `d` (details),
   `a` (approve), `y` (ready), `m` (merge).
 
 ## Phase 2: PR detail and actions ✅
