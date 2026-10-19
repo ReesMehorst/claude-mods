@@ -1,0 +1,15 @@
+{
+  "name": "usage-band",
+  "author": { "name": "ReesMehorst" },
+  "version": "0.3.0",
+  "description": "Band above the prompt: context, plan limits with pace and ETA, or API spend vs budget, plus token breakdown and warnings.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "budgetUsd": {
+      "type": "number",
+      "title": "API budget (USD)",
+      "description": "API-credit sessions only: session spend budget for the bar, ETA and warning. 0 turns it off.",
+      "default": 0
+    }
+  }
+}

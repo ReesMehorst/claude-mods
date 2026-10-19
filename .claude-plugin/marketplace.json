@@ -1,0 +1,19 @@
+{
+  "name": "reesmehorst",
+  "description": "Claude Code mods by ReesMehorst",
+  "owner": { "name": "ReesMehorst", "url": "https://github.com/ReesMehorst" },
+  "plugins": [
+    {
+      "name": "usage-band",
+      "description": "Band above the prompt: context, plan limits with pace and ETA, or API spend vs budget, plus token breakdown and warnings.",
+      "source": "./usage-band",
+      "category": "productivity"
+    },
+    {
+      "name": "github-pane",
+      "description": "Live GitHub pane for the current repo: PRs with CI and review state, workflow runs, issues and what needs you.",
+      "source": "./github-pane",
+      "category": "development"
+    }
+  ]
+}
