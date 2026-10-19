@@ -1,6 +1,6 @@
 # github-pane expansion: handoff
 
-The plan has four phases. Phases 1 and 2 are merged, phase 3 is in review; phase 4 is open.
+The plan has four phases. Phases 1–3 are merged; phase 4 is in review.
 Each phase is one PR off `main`, version bumped, README updated.
 
 ## Where things stand
@@ -10,12 +10,15 @@ Each phase is one PR off `main`, version bumped, README updated.
     close the pane, and confirm polling stops.
 - **Phase 2**: merged in [PR #4](https://github.com/ReesMehorst/claude-mods/pull/4), version 0.3.0.
   - Still open: a live check on a throwaway test PR: `d`, `a`, `y`, and `m` twice.
-- **Phase 3**: done, version 0.4.0, branch `github-pane-phase3`.
+- **Phase 3**: merged in [PR #5](https://github.com/ReesMehorst/claude-mods/pull/5), version 0.4.0.
   - "Your run" means a run on the head branch of one of your open PRs (no extra
     `gh` call). Pushes without a PR toast nothing; add `--user <login>` if wanted.
   - Still open: a live check that each toast fires once.
-- **Phase 4**: not started. Branch off `main` once phase 3 merges, or off
-  `github-pane-phase3` if it hasn't.
+- **Phase 4**: done, version 0.5.0, branch `github-pane-phase4`.
+  - Notifications come from `gh api repos/<repo>/notifications` (unread only). A token
+    without the notifications scope gives an empty tab, not an error.
+  - Mark read is `e` (GitHub's own "done" key). Fix with Claude is `f`.
+  - Still open: a live check. Mark one notification read, and press `f` on a red run.
 
 ## Code map
 

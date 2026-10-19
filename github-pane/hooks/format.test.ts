@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, confirmPress, issueRow, logTail, nextDelay, prDetail, prRow, runRow, toasts } from './format'
+import { ago, checks, confirmPress, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, notifUrl, prDetail, prRow, runRow, toasts } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -90,4 +90,28 @@ test('confirmPress: merge never runs on a single press', () => {
   expect(confirmPress(null, 'pr-1')).toEqual({ run: false, armed: 'pr-1' })
   expect(confirmPress('pr-2', 'pr-1')).toEqual({ run: false, armed: 'pr-1' })
   expect(confirmPress('pr-1', 'pr-1')).toEqual({ run: true, armed: null })
+})
+
+test('notifRow and URL mapping', () => {
+  const n = { id: '42', unread: true, reason: 'review_requested', updated_at: '2026-10-19T11:00:00Z', repository: { html_url: 'https://github.com/o/r' },
+    subject: { title: 'Add pane', type: 'PullRequest', url: 'https://api.github.com/repos/o/r/pulls/7' } }
+  const r = notifRow(n, now)
+  expect(r).toMatchObject({ key: 'notif-42', kind: 'notif', id: 42, glyph: '●', title: 'Add pane', sub: 'review requested · PullRequest', age: '1h' })
+  expect(r.url).toBe('https://github.com/o/r/pull/7')
+  expect(notifUrl({ subject: { url: 'https://api.github.com/repos/o/r/issues/3' } })).toBe('https://github.com/o/r/issues/3')
+  expect(notifUrl({ ...n, subject: { url: 'https://api.github.com/repos/o/r/releases/9' } })).toBe('https://github.com/o/r')
+})
+
+test('failedRunId and fixPrompt', () => {
+  expect(failedRunId([
+    { state: 'SUCCESS', link: 'https://github.com/o/r/actions/runs/1/job/2' },
+    { state: 'FAILURE', link: 'https://ci.example.com/x' },
+    { state: 'FAILURE', link: 'https://github.com/o/r/actions/runs/3/job/4' },
+  ])).toBe(3)
+  expect(failedRunId([{ state: 'SUCCESS', link: 'https://github.com/o/r/actions/runs/1/job/2' }])).toBe(null)
+  const pr = prRow({ number: 7, title: 'x', headRefName: 'feat', updatedAt: '2026-10-19T11:00:00Z' }, now)
+  expect(fixPrompt(pr, 3, 'build\tstep\t2026-10-19T11:00:00Z boom\n')).toBe(
+    'CI failed on PR #7, run 3 (branch feat).\n```\nboom\n```\nFind and fix the cause of this CI failure.')
+  const run = runRow({ databaseId: 9, status: 'completed', conclusion: 'failure', headBranch: 'main', createdAt: '2026-10-19T11:00:00Z' }, now)
+  expect(fixPrompt(run, 9, 'x').split('\n')[0]).toBe('CI failed on run 9 (branch main).')
 })

@@ -33,10 +33,13 @@ A band above the prompt that shows where your session stands.
 
 - **This branch**: the PR for your checked-out branch, pinned above the tabs.
 - Tabs: **Pull requests**, **Checks** (workflow runs), **Issues**, **For me**
-  (review requests, your PRs, issues assigned to you). Hotkeys `1`–`4`, `r` refresh.
+  (review requests, your PRs, issues assigned to you), **Notifications** (unread, this repo).
+  Hotkeys `1`–`5`, `r` refresh.
 - Each row: CI status, title, branch → base, author, review state, age.
 - Select a row for actions: open on GitHub, `c` checkout a PR, `x` rerun failed jobs,
-  `l` show the failed-step log inline.
+  `l` show the failed-step log inline, `e` mark a notification read.
+- On a failed run or PR: `f` **Fix with Claude** puts the failed log and a fix request in
+  the prompt box as a draft. Nothing is sent until you press Enter.
 - On a PR: `d` details (diff stat, mergeable state, reviewers, description), `a` approve
   (not on your own PRs), `y` mark a draft ready, `m` squash-merge and delete the branch.
   Merge asks for a second `m` press; changing the selection or Close cancels it.
