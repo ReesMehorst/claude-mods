@@ -4,7 +4,7 @@ import type { On, RenderPropsOf } from 'claude-code'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 const PR = { number: 5, title: 'Add thing', isDraft: true, author: { login: 'ann' }, headRefName: 'feat', baseRefName: 'main', statusCheckRollup: [], updatedAt: '2026-10-19T11:00:00Z', url: 'https://github.com/o/r/pull/5' }
-const PROPS = { title: 'GitHub', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { top: 0, bodyRows: 40 } } as unknown as RenderPropsOf['Pane']
+const PROPS = { title: 'GitHub', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { top: 0, bodyRows: 40 } } as unknown as RenderPropsOf['Pane']
 
 const NOTIF = { id: '42', unread: true, reason: 'mention', updated_at: '2026-10-19T11:00:00Z', subject: { title: 'Ping', type: 'Issue', url: 'https://api.github.com/repos/o/r/issues/3' } }
 const RUN = { databaseId: 9, status: 'completed', conclusion: 'failure', displayTitle: 'CI run', workflowName: 'CI', headBranch: 'feat', createdAt: '2026-10-19T11:00:00Z', url: 'https://github.com/o/r/actions/runs/9' }
@@ -112,16 +112,37 @@ test('desktop: failed log in a code block under the run', async ($, on) => {
 test('desktop: filter narrows the tab, tab change clears it; empty tabs say why', async ($, on) => {
   await start($, on)
   const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
-  await ui.input({ key: 'filter', text: 'zzz', kind: 'change' })
+  await ui.post({ q: 'zzz' })
   expect(await ui.find({ text: /Add thing/ })).toBeUndefined()
   expect(await ui.find({ text: /No matches/ })).toBeDefined()
-  expect(await ui.find({ text: /Pull requests 0 \/ 1/ })).toBeDefined()
-  await ui.input({ key: 'filter', text: 'FEAT', kind: 'change' })
+  expect((await ui.find({ key: 'seg-prs' }))?.text).toBe('Pull requests 0 / 1 ')
+  await ui.key({ key: 'u', ctrl: true, in: 'filter' })
+  for (const key of ['F', 'E', 'A', 'T', 'X', 'backspace']) await ui.key({ key, in: 'filter' })
   expect(await ui.find({ text: /Add thing/ })).toBeDefined()
   expect(await ui.find({ text: /1 of 1 match/ })).toBeDefined()
   await ui.press({ key: 'tab-issues' })
   expect(await ui.find({ text: /No open issues in this repo\./ })).toBeDefined()
   await ui.press({ key: 'tab-prs' })
-  expect(await ui.find({ text: /Pull requests 1$/ })).toBeDefined() // filter cleared
+  expect((await ui.find({ key: 'seg-prs' }))?.text).toBe('Pull requests 1 ') // filter cleared
   await ui.unmount()
+})
+
+test('desktop: segmented tabs, red count on failing runs; narrow pane picks tabs from a View dropdown', async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
+  expect((await ui.find({ key: 'seg-checks' }))?.children[1]).toMatchObject({ props: { color: 'error' } }) // count pill
+  expect(await ui.find({ key: 'tab-menu' })).toBeUndefined()
+  await ui.unmount()
+
+  const slim = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: { ...PROPS, bodyColumns: 40 } } as any)
+  expect(await slim.find({ key: 'tabs' })).toBeUndefined()
+  expect((await slim.find({ key: 'tab-menu' }))?.text).toBe('Pull requests (1)')
+  expect(await slim.find({ key: 'opt-checks' })).toBeUndefined() // closed until pressed
+  expect(await slim.find({ text: /feat → main/ })).toBeUndefined() // narrow rows drop the branch
+  await slim.press({ key: 'tab-menu' })
+  expect((await slim.find({ key: 'opt-checks' }))?.text).toBe('Checks (1 failing)')
+  await slim.press({ key: 'opt-checks' })
+  expect(await slim.find({ key: 'opt-checks' })).toBeUndefined() // a pick closes it
+  expect(await slim.find({ text: /CI run/ })).toBeDefined()
+  await slim.unmount()
 })

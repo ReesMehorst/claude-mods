@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, notifUrl, prDetail, prRow, prText, runRow, toasts } from './format'
+import { ago, checks, confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, notifUrl, prDetail, prRow, prText, runRow, tabCount, tabOption, toasts } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -142,6 +142,24 @@ test('desktop row: draft pill replaces review, CI pill by tone, runs get one pil
   expect(desktopRow(runRow({ databaseId: 1, status: 'in_progress', displayTitle: 'x', workflowName: 'CI', createdAt: '2026-10-19T11:00:00Z' }, now)).pills)
     .toEqual([{ text: 'Running', tone: 'warning' }])
   expect(desktopRow(issueRow({ number: 3, title: 'Bug', updatedAt: '2026-10-19T11:00:00Z', url: 'u' }, now)).pills).toEqual([])
+})
+
+test('desktop row, narrow: no branch, one pill, a red one first', () => {
+  const pr = { number: 7, title: 'Add pane', headRefName: 'feat', baseRefName: 'main', author: { login: 'rees' }, updatedAt: '2026-10-19T11:00:00Z', url: 'u' }
+  const failing = desktopRow(prRow({ ...pr, reviewDecision: 'APPROVED', statusCheckRollup: [{ conclusion: 'FAILURE' }] }, now), true)
+  expect(failing.meta).toBe('#7 · @rees')
+  expect(failing.pills).toEqual([{ text: 'CI failing', tone: 'error' }])
+  expect(desktopRow(prRow({ ...pr, reviewDecision: 'APPROVED', statusCheckRollup: [] }, now), true).pills).toEqual([{ text: 'Approved', tone: 'success' }])
+})
+
+test('tab counts: total or shown / total, red with failures; Select labels name failures', () => {
+  const run = (conclusion: string) => runRow({ databaseId: 1, status: 'completed', conclusion, createdAt: '2026-10-19T11:00:00Z' }, now)
+  const rows = [run('failure'), run('success'), run('failure')]
+  expect(tabCount(rows)).toEqual({ text: '3', tone: 'error' })
+  expect(tabCount(rows.slice(1, 2), 0)).toEqual({ text: '0 / 1', tone: 'subtle' })
+  expect(tabOption('Checks', rows)).toBe('Checks (2 failing)')
+  expect(tabOption('Issues', [])).toBe('Issues (0)')
+  expect(tabOption('Checks', rows.slice(1, 2), 0)).toBe('Checks (0 / 1)')
 })
 
 test('matches: title, #n, branch or author, any case; blank matches all', () => {

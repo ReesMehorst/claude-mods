@@ -32,6 +32,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'github-pane': { snap: Snapshot; tab: Tab; selected: string | null; detail: Detail | null; busy: string | null; confirm: string | null; filter: string }
+    'github-pane': { snap: Snapshot; tab: Tab; selected: string | null; detail: Detail | null; busy: string | null; confirm: string | null; filter: string; menu: boolean }
   }
 }

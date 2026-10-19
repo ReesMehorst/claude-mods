@@ -35,6 +35,8 @@ A band above the prompt that shows where your session stands.
 - Tabs: **Pull requests**, **Checks** (workflow runs), **Issues**, **For me**
   (review requests, your PRs, issues assigned to you), **Notifications** (unread, this repo).
   Hotkeys `1`–`5`, `r` refresh.
+  In the desktop app the tabs are one segmented row with a count pill each (red when the tab
+  has failing items); in a narrow pane they become a full-width **View** dropdown and rows drop the branch.
 - Each row: CI status, title, branch → base, author, review state, age.
   In the desktop app a row is two lines, with review and CI as coloured pills; a selected
   row opens a card under it with its actions and details: the PR description as formatted
@@ -47,7 +49,7 @@ A band above the prompt that shows where your session stands.
   (not on your own PRs), `y` mark a draft ready, `m` squash-merge and delete the branch.
   Merge asks for a second `m` press; changing the selection or Close cancels it. In the
   desktop app the first press shows a confirm card with Merge and Cancel instead.
-- Desktop app: a **Filter** field above the list narrows the tab by title, `#n`, branch or
+- Desktop app: a full-width **Filter** field above the list (click it, then type; ctrl+U clears) narrows the tab by title, `#n`, branch or
   author; switching tabs clears it. An empty tab says why it is empty.
 - Refreshes every 60 s while the pane is open, with toasts when a PR's checks turn red,
   your review is requested, your PR is approved, or a run on your PR's branch finishes.

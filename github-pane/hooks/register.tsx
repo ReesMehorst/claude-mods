@@ -3,10 +3,11 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Detail, PrParts, Row, Snapshot, Tab, Tone } from '../types'
 import type { Empty, Pill, Seen } from './format'
-import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, prDetail, prRow, prText, runRow, toasts } from './format'
+import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, prDetail, prRow, prText, runRow, tabCount, tabOption, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
+const NARROW_COLS = 65 // below this the desktop draws tabs as a View picker
 const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me'], ['notifs', 'Notifications']]
 const DETAIL_FIELDS = 'body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles'
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
@@ -24,6 +25,7 @@ const detail = atom({ plugin: 'github-pane', key: 'detail' } as const, null as D
 const busy = atom({ plugin: 'github-pane', key: 'busy' } as const, null as string | null)
 const confirm = atom({ plugin: 'github-pane', key: 'confirm' } as const, null as string | null) // row key armed for merge
 const filter = atom({ plugin: 'github-pane', key: 'filter' } as const, '') // desktop list filter, cleared on tab change
+const menu = atom({ plugin: 'github-pane', key: 'menu' } as const, false) // narrow desktop pane: View dropdown open
 
 type $ = EngineInterface
 
@@ -159,6 +161,14 @@ export const register: Register = on => {
     return { text: 'GitHub pane opened.' }
   })
 
+  // The filter field (filter-field.tsx) posts each edit as { q }.
+  on('ui.message', async ($, e, next) => {
+    const d = e.data as { q?: unknown }
+    if (e.requestId !== PANE || e.element !== 'filter' || typeof d?.q !== 'string') return next(e)
+    await update($, filter, () => d.q as string)
+    return {}
+  })
+
   on('ui.close', { id: PANE }, async ($, e, next) => {
     isOpen = false
     timer?.cancel()
@@ -170,12 +180,16 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link, Code, Markdown } = els
     const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
-    const [s, t, sel, det, work, armed, q] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter)])
+    // narrow desktop pane: tabs as a full-width View dropdown (a native Select can't be widened)
+    const narrow = isApp && e.props.bodyColumns < NARROW_COLS
+    const [s, t, sel, det, work, armed, q, isMenu] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter), read($, menu)])
     const all = s.rows[t]
-    const Input = isApp && 'Input' in els ? els.Input : null // the terminal keeps its tree; mobile has no field
-    const query = Input ? q : ''
+    const Client = isApp && 'Client' in els ? els.Client : null // the terminal keeps its tree; mobile and vscode have no Client
+    const query = Client ? q : ''
     const rows = all.filter(r => matches(r, query))
     const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
+    const go = (id: Tab) => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => ''), update($, menu, () => false)])
+    const shown = (id: Tab) => id === t && query ? rows.length : undefined // filtered count, active tab only
     const merge = async (r: Row) => {
       const c = confirmPress(armed, r.key)
       await update($, confirm, () => c.armed)
@@ -280,7 +294,7 @@ export const register: Register = on => {
 
     const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={PILL_BG[p.tone]} color={p.tone}>{` ${p.text} `}</Text>
     const appRowView = (r: Row) => {
-      const d = desktopRow(r)
+      const d = desktopRow(r, narrow)
       return (
         <Box key={r.key} flexDirection="column" backgroundColor={sel === r.key ? SELECTED_BG : undefined}>
           <Box key={`box-${r.key}`} flexDirection="column" paddingX={1} paddingY="xs" hover={{ backgroundColor: sel === r.key ? SELECTED_BG : HOVER_BG }}>
@@ -340,22 +354,60 @@ export const register: Register = on => {
           </Box>
         ) : null}
 
-        <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-          {TABS.map(([id, label], i) => (
-            <Button key={`tab-${id}`} hotkey={String(i + 1)} variant={id === t ? 'primary' : 'secondary'}
-              onPress={() => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => '')])}>
-              {`${label} ${id === t && query ? `${rows.length} / ${all.length}` : s.rows[id].length}`}
-            </Button>
-          ))}
-        </Box>
+        {narrow ? (
+          <Box key="view" flexDirection="column" width="100%">
+            <Box key="view-trigger" flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1} paddingX={1}
+              borderStyle="round" borderColor="subtle" hover={{ backgroundColor: HOVER_BG }}>
+              <Box flexDirection="row" alignItems="center" columnGap={1}>
+                <Text size="caption" dimColor>View</Text>
+                <Button key="tab-menu" plain onPress={() => update($, menu, m => !m)}>
+                  <Text weight="semibold">{tabOption(TABS.find(([id]) => id === t)![1], all, shown(t))}</Text>
+                </Button>
+              </Box>
+              <Text dimColor>{isMenu ? '▴' : '▾'}</Text>
+            </Box>
+            {isMenu ? (
+              <Box key="view-options" flexDirection="column" borderStyle="round" borderColor="subtle">
+                {TABS.map(([id, label], i) => (
+                  <Box key={`opt-box-${id}`} paddingX={1} backgroundColor={id === t ? SELECTED_BG : undefined} hover={{ backgroundColor: id === t ? SELECTED_BG : HOVER_BG }}>
+                    <Button key={`opt-${id}`} hotkey={String(i + 1)} plain onPress={() => go(id)}>
+                      <Text weight={id === t ? 'semibold' : 'regular'}>{tabOption(label, s.rows[id], shown(id))}</Text>
+                    </Button>
+                  </Box>
+                ))}
+              </Box>
+            ) : null}
+          </Box>
+        ) : isApp ? (
+          <Box key="tabs" flexDirection="row" flexWrap="wrap" borderStyle="round" borderColor="subtle">
+            {TABS.map(([id, label], i) => (
+              <Box key={`seg-${id}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1}
+                backgroundColor={id === t ? SELECTED_BG : undefined} hover={{ backgroundColor: id === t ? SELECTED_BG : HOVER_BG }}>
+                <Button key={`tab-${id}`} hotkey={String(i + 1)} plain onPress={() => go(id)}>
+                  <Text weight={id === t ? 'semibold' : 'regular'}>{label}</Text>
+                </Button>
+                {pill(tabCount(s.rows[id], shown(id)))}
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+            {TABS.map(([id, label], i) => (
+              <Button key={`tab-${id}`} hotkey={String(i + 1)} variant={id === t ? 'primary' : 'secondary'} onPress={() => go(id)}>
+                {`${label} ${s.rows[id].length}`}
+              </Button>
+            ))}
+          </Box>
+        )}
 
         {errorText && isApp ? (
           <Box borderStyle="round" borderColor="error" paddingX={1}><Text color="error" wrap="wrap">{errorText}</Text></Box>
         ) : errorText ? <Text color="error">{errorText}</Text> : null}
 
-        {Input && all.length ? (
+        {Client && all.length ? (
           <Box key="filter-row" flexDirection="row" alignItems="center" columnGap={1}>
-            <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
+            {/* a Client, not an Input: the desktop draws a native Input at a fixed width */}
+            <Client key="filter" module="./filter-field.tsx" props={{ q }} flexGrow={1} />
             {q ? <Button key="clear-filter" label="Clear filter" plain dimColor onPress={() => update($, filter, () => '')}><Text>✕</Text></Button> : null}
           </Box>
         ) : null}
