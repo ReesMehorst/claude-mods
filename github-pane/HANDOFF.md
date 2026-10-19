@@ -1,6 +1,6 @@
 # github-pane expansion: handoff
 
-The plan has four phases. Phase 1 is done and in review; phases 2–4 are open.
+The plan has four phases. Phases 1 and 2 are done and in review; phases 3–4 are open.
 Each phase is one PR off `main`, version bumped, README updated.
 
 ## Where things stand
@@ -8,8 +8,10 @@ Each phase is one PR off `main`, version bumped, README updated.
 - **Phase 1**: done, in [PR #3](https://github.com/ReesMehorst/claude-mods/pull/3) on branch `github-pane-phase1`, version 0.2.0.
   - Still open: a live check. Open `/github`, check the "This branch" row,
     close the pane, and confirm polling stops.
-- **Phases 2–4**: not started. Branch each one off `main` after #3 merges, or off
-  `github-pane-phase1` if it hasn't merged yet.
+- **Phase 2**: done, version 0.3.0, branched off `github-pane-phase1`.
+  - Still open: a live check on a throwaway test PR: `d`, `a`, `y`, and `m` twice.
+- **Phases 3–4**: not started. Branch each one off `main` after #3 merges, or off
+  the latest open phase branch if it hasn't merged yet.
 
 ## Code map
 
@@ -57,9 +59,10 @@ which names `.../plugin-authoring/types/claude-code.d.ts`. Write a scratch
 - `validate` notes "gating hook without .catch: ui.close". This is harmless,
   because the hook can't throw.
 - Hotkeys already taken: `1`–`4` (tabs), `r` (refresh), `c` (checkout), `x` (rerun),
-  `l` (failed log / show checks), `escape` (close detail).
+  `l` (failed log / show checks), `escape` (close detail), and from phase 2 `d` (details),
+  `a` (approve), `y` (ready), `m` (merge).
 
-## Phase 2: PR detail and actions
+## Phase 2: PR detail and actions ✅
 
 **Goal:** selecting a PR shows more about it and lets you act on it.
 

@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, issueRow, logTail, newlyFailed, nextDelay, prRow, runRow } from './format'
+import { ago, checks, confirmPress, issueRow, logTail, newlyFailed, nextDelay, prDetail, prRow, runRow } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -53,4 +53,27 @@ test('nextDelay: reset on ok, back off on errors, stop when fatal', () => {
   expect(nextDelay(480_000, 'HTTP 502', 60_000)).toBe(600_000)
   expect(nextDelay(60_000, 'fatal: not a git repository (or any of the parent directories): .git', 60_000)).toBe(null)
   expect(nextDelay(60_000, 'To get started with GitHub CLI, please run:  gh auth login', 60_000)).toBe(null)
+})
+
+test('pr row carries draft flag and author', () => {
+  const r = prRow({ number: 8, isDraft: true, author: { login: 'rees' }, updatedAt: '2026-10-19T11:00:00Z' }, now)
+  expect(r.isDraft).toBe(true)
+  expect(r.author).toBe('rees')
+})
+
+test('prDetail: stat, merge state, reviewers, clipped body', () => {
+  const d = prDetail({
+    additions: 12, deletions: 3, changedFiles: 4, mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED',
+    latestReviews: [{ author: { login: 'ann' }, state: 'CHANGES_REQUESTED' }],
+    reviewRequests: [{ login: 'bob' }, { name: 'core-team' }],
+    body: 'a\r\nb\nc\nd',
+  }, 2)
+  expect(d).toBe('+12 −3 · 4 files\nmergeable · blocked\nReviewers:\n  @ann changes requested\n  @bob requested\n  core-team requested\n\na\nb\n… 2 more lines')
+  expect(prDetail({})).toBe('+0 −0 · 0 files\nunknown · unknown\nNo reviewers.\n\nNo description.')
+})
+
+test('confirmPress: merge never runs on a single press', () => {
+  expect(confirmPress(null, 'pr-1')).toEqual({ run: false, armed: 'pr-1' })
+  expect(confirmPress('pr-2', 'pr-1')).toEqual({ run: false, armed: 'pr-1' })
+  expect(confirmPress('pr-1', 'pr-1')).toEqual({ run: true, armed: null })
 })

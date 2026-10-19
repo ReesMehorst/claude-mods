@@ -42,6 +42,8 @@ export const prRow = (p: any, now: number): Row => {
     age: ago(p.updatedAt, now),
     url: p.url,
     isFailed: c === FAIL,
+    isDraft: !!p.isDraft,
+    author: p.author?.login,
   }
 }
 
@@ -91,3 +93,24 @@ const FATAL = /not a git repository|no git remotes|none of the git remotes|gh au
 // Next poll delay: base when ok, doubling up to 10 min on errors, null (stop) when fatal.
 export const nextDelay = (prev: number, error: string | null, base: number) =>
   !error ? base : FATAL.test(error) ? null : Math.min(prev * 2, 600_000)
+
+// `gh pr view --json body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles` → detail text.
+export const prDetail = (p: any, bodyLines = 20) => {
+  const low = (x: unknown) => String(x ?? 'unknown').toLowerCase().replace(/_/g, ' ')
+  const reviewed = (p.latestReviews ?? []).map((r: any) => `  @${r.author?.login} ${low(r.state)}`)
+  const asked = (p.reviewRequests ?? []).map((r: any) => `  ${r.login ? `@${r.login}` : r.name ?? r.slug} requested`)
+  const body = String(p.body ?? '').trim().split(/\r?\n/)
+  const more = body.length - bodyLines
+  return [
+    `+${p.additions ?? 0} −${p.deletions ?? 0} · ${p.changedFiles ?? 0} files`,
+    `${low(p.mergeable)} · ${low(p.mergeStateStatus)}`,
+    ...(reviewed.length + asked.length ? ['Reviewers:', ...reviewed, ...asked] : ['No reviewers.']),
+    '',
+    body[0] ? body.slice(0, bodyLines).join('\n') : 'No description.',
+    ...(more > 0 ? [`… ${more} more lines`] : []),
+  ].join('\n')
+}
+
+// Two-press confirm: first press on a key arms it, second press on the same key runs (and disarms).
+export const confirmPress = (armed: string | null, key: string) =>
+  armed === key ? { run: true, armed: null } : { run: false, armed: key }
