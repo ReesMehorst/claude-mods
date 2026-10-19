@@ -1,15 +1,15 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Row, Snapshot, Tab } from '../types'
-import { issueRow, logTail, newlyFailed, prRow, runRow } from './format'
+import { issueRow, logTail, newlyFailed, nextDelay, prRow, runRow } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
 const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me']]
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
 const ISSUE_FIELDS = 'number,title,labels,assignees,updatedAt,url'
-const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [] }, at: 0, error: null }
+const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [] }, here: null, at: 0, error: null }
 
 const snap = atom({ plugin: 'github-pane', key: 'snap' } as const, EMPTY)
 const tab = atom({ plugin: 'github-pane', key: 'tab' } as const, 'prs' as Tab)
@@ -28,21 +28,37 @@ const ghJson = async ($: $, args: string[]) => JSON.parse(await gh($, args))
 
 let prevChecks: Map<number, boolean> | null = null // ponytail: module variable, resets on reload (no toast storm)
 let isRefreshing = false
+let isOpen = false // polls only while the pane is open
+let timer: Timer | null = null
+let delay = EVERY_MS
 
-async function refresh($: $) {
-  if (isRefreshing) return
+// Refreshes now, then schedules the next poll by the result (backoff, or stop when retrying can't help).
+async function poll($: $) {
+  if (isRefreshing) return // the in-flight poll schedules the next one
+  timer?.cancel()
+  timer = null
+  const d = nextDelay(delay, await refresh($), EVERY_MS)
+  if (d === null || !isOpen) return
+  delay = d
+  timer = $.clock.after(d, () => void poll($))
+}
+
+// Returns the error message, or null on success.
+async function refresh($: $): Promise<string | null> {
   isRefreshing = true
   try {
     const repo = (await ghJson($, ['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner as string
     const now = await $.clock.now()
-    const [prs, runs, issues, review, authored, assigned] = await Promise.all([
+    const [prs, runs, issues, review, authored, assigned, status] = await Promise.all([
       ghJson($, ['pr', 'list', '-L', '30', '--json', PR_FIELDS]),
       ghJson($, ['run', 'list', '-L', '20', '--json', 'databaseId,displayTitle,status,conclusion,workflowName,headBranch,event,createdAt,url']),
       ghJson($, ['issue', 'list', '-L', '30', '--json', ISSUE_FIELDS]),
       ghJson($, ['pr', 'list', '--search', 'review-requested:@me', '--json', PR_FIELDS]),
       ghJson($, ['pr', 'list', '--author', '@me', '--json', PR_FIELDS]),
       ghJson($, ['issue', 'list', '--assignee', '@me', '--json', ISSUE_FIELDS]),
+      ghJson($, ['pr', 'status', '--json', PR_FIELDS]).catch(() => null), // detached HEAD etc.: no header, not an error
     ])
+    const cur = status?.currentBranch
     const prRows = prs.map((p: any) => prRow(p, now))
     const mine = [...review, ...authored].map((p: any) => prRow(p, now))
       .filter((r: Row, i: number, all: Row[]) => all.findIndex(x => x.key === r.key) === i)
@@ -54,12 +70,16 @@ async function refresh($: $) {
     await update($, snap, () => ({
       repo,
       rows: { prs: prRows, checks: runs.map((r: any) => runRow(r, now)), issues: issues.map((i: any) => issueRow(i, now)), mine },
+      here: cur?.number ? { ...prRow(cur, now), key: 'here' } : null,
       at: now,
       error: null,
     }))
+    return null
   } catch (err: any) {
     const at = await $.clock.now()
-    await update($, snap, s => ({ ...s, at, error: String(err?.message ?? err) }))
+    const error = String(err?.message ?? err)
+    await update($, snap, s => ({ ...s, at, error }))
+    return error
   } finally {
     isRefreshing = false
   }
@@ -71,7 +91,7 @@ async function act($: $, label: string, args: string[], show: (out: string) => s
   try {
     const out = await gh($, args, 120_000)
     await update($, detail, () => show(out))
-    void refresh($)
+    void poll($)
   } catch (err: any) {
     await update($, detail, () => `${label} failed: ${err?.message ?? err}`)
   } finally {
@@ -82,15 +102,26 @@ async function act($: $, label: string, args: string[], show: (out: string) => s
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'github', description: 'Open the GitHub pane for this repo' })
-    void refresh($)
-    $.clock.every(EVERY_MS, () => void refresh($))
+    // A reload keeps the pane up but resets module state: resume polling.
+    if ((await $.ui.panes()).some(p => p.id === PANE)) {
+      isOpen = true
+      void poll($)
+    }
     return next(e)
   })
 
   on('command.run', { command: 'github' }, async $ => {
     await $.ui.open({ id: PANE, title: 'GitHub' })
-    void refresh($)
+    isOpen = true
+    void poll($)
     return { text: 'GitHub pane opened.' }
+  })
+
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    isOpen = false
+    timer?.cancel()
+    timer = null
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -118,15 +149,33 @@ export const register: Register = on => {
       </Box>
     )
 
+    const rowView = (r: Row) => (
+      <Box key={r.key} flexDirection="column">
+        <Button key={`row-${r.key}`} plain onPress={() => pick(sel === r.key ? null : r.key)}>
+          <Text color={r.tone}>{`${sel === r.key ? '▸' : ' '} ${r.glyph} `}</Text>
+          <Text weight={sel === r.key ? 'bold' : 'regular'}>{r.title}</Text>
+          <Text dimColor>{`  ${r.sub} · ${r.age}`}</Text>
+        </Button>
+        {sel === r.key ? actions(r) : null}
+      </Box>
+    )
+
     return (
       <Box flexDirection="column" rowGap={1}>
         <Box flexDirection="row" justifyContent="space-between" flexWrap="wrap" columnGap={2}>
           <Text weight="bold">{s.repo ?? 'GitHub'}</Text>
           <Box flexDirection="row" columnGap={2}>
-            <Text dimColor size="caption">{work ? `${work}…` : time ? `updated ${time} · every ${EVERY_MS / 1000}s` : 'loading…'}</Text>
-            <Button key="refresh" hotkey="r" plain onPress={() => refresh($)}>↻ Refresh</Button>
+            <Text dimColor size="caption">{work ? `${work}…` : time ? `updated ${time} · ${timer ? `every ${delay / 1000}s` : 'paused, press r'}` : 'loading…'}</Text>
+            <Button key="refresh" hotkey="r" plain onPress={() => poll($)}>↻ Refresh</Button>
           </Box>
         </Box>
+
+        {s.repo && s.at ? (
+          <Box key="here" flexDirection="column">
+            <Text dimColor size="caption">This branch</Text>
+            {s.here ? rowView(s.here) : <Text dimColor>  No PR for this branch.</Text>}
+          </Box>
+        ) : null}
 
         <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
           {TABS.map(([id, label], i) => (
@@ -141,16 +190,7 @@ export const register: Register = on => {
 
         <Box flexDirection="column">
           {rows.length === 0 && s.at ? <Text dimColor>{t === 'mine' ? 'Nothing waiting on you.' : 'Nothing here.'}</Text> : null}
-          {rows.map(r => (
-            <Box key={r.key} flexDirection="column">
-              <Button key={`row-${r.key}`} plain onPress={() => pick(sel === r.key ? null : r.key)}>
-                <Text color={r.tone}>{`${sel === r.key ? '▸' : ' '} ${r.glyph} `}</Text>
-                <Text weight={sel === r.key ? 'bold' : 'regular'}>{r.title}</Text>
-                <Text dimColor>{`  ${r.sub} · ${r.age}`}</Text>
-              </Button>
-              {sel === r.key ? actions(r) : null}
-            </Box>
-          ))}
+          {rows.map(rowView)}
         </Box>
 
         {det ? (

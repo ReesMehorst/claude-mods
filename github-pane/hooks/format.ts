@@ -84,3 +84,10 @@ export const newlyFailed = (prev: Map<number, boolean> | null, rows: Row[]) =>
 // Failed-log tail: drop the "job\tstep\t" prefix gh puts on each line.
 export const logTail = (raw: string, lines = 30) =>
   raw.split(/\r?\n/).filter(Boolean).slice(-lines).map(l => l.split('\t').at(-1)!.replace(/^\S+Z /, '')).join('\n')
+
+// Errors a retry can't fix: no repo, no remote, gh missing or signed out.
+const FATAL = /not a git repository|no git remotes|none of the git remotes|gh auth login|not logged in|ENOENT|executable file not found|command not found/i
+
+// Next poll delay: base when ok, doubling up to 10 min on errors, null (stop) when fatal.
+export const nextDelay = (prev: number, error: string | null, base: number) =>
+  !error ? base : FATAL.test(error) ? null : Math.min(prev * 2, 600_000)

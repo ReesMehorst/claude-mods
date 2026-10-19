@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, issueRow, logTail, newlyFailed, prRow, runRow } from './format'
+import { ago, checks, issueRow, logTail, newlyFailed, nextDelay, prRow, runRow } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -45,4 +45,12 @@ test('newlyFailed only flags green-to-red', () => {
 
 test('logTail strips job/step and timestamp prefixes', () => {
   expect(logTail('build\tRun tests\t2026-10-19T11:00:00.1234567Z FAIL a.test\nbuild\tRun tests\t2026-10-19T11:00:01.0Z exit 1', 1)).toBe('exit 1')
+})
+
+test('nextDelay: reset on ok, back off on errors, stop when fatal', () => {
+  expect(nextDelay(240_000, null, 60_000)).toBe(60_000)
+  expect(nextDelay(60_000, 'HTTP 502', 60_000)).toBe(120_000)
+  expect(nextDelay(480_000, 'HTTP 502', 60_000)).toBe(600_000)
+  expect(nextDelay(60_000, 'fatal: not a git repository (or any of the parent directories): .git', 60_000)).toBe(null)
+  expect(nextDelay(60_000, 'To get started with GitHub CLI, please run:  gh auth login', 60_000)).toBe(null)
 })
