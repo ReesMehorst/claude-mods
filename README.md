@@ -36,7 +36,9 @@ A band above the prompt that shows where your session stands.
   (review requests, your PRs, issues assigned to you), **Notifications** (unread, this repo).
   Hotkeys `1`–`5`, `r` refresh.
 - Each row: CI status, title, branch → base, author, review state, age.
-  In the desktop app a row is two lines, with review and CI as coloured pills.
+  In the desktop app a row is two lines, with review and CI as coloured pills; a selected
+  row opens a card under it with its actions and details: the PR description as formatted
+  markdown, reviewers with a state pill each, failed logs and checks in a code block.
 - Select a row for actions: open on GitHub, `c` checkout a PR, `x` rerun failed jobs,
   `l` show the failed-step log inline, `e` mark a notification read.
 - On a failed run or PR: `f` **Fix with Claude** puts the failed log and a fix request in

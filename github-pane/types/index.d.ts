@@ -18,6 +18,10 @@ export type Row = {
   branch?: string // PRs and runs: head branch
   base?: string // PRs only: base branch
 }
+export type Reviewer = { who: string; text: string; tone: Tone }
+export type PrParts = { stat: string; merge: string; reviewers: Reviewer[]; body: string }
+// What the detail box shows: text (the terminal draws only this), or a code block, or a PR's parts.
+export type Detail = { text: string; code?: boolean; pr?: PrParts }
 export type Snapshot = {
   repo: string | null
   rows: Record<Tab, Row[]>
@@ -28,6 +32,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'github-pane': { snap: Snapshot; tab: Tab; selected: string | null; detail: string | null; busy: string | null; confirm: string | null }
+    'github-pane': { snap: Snapshot; tab: Tab; selected: string | null; detail: Detail | null; busy: string | null; confirm: string | null }
   }
 }
