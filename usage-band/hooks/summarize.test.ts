@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { addUsage, bar, cacheHit, compactLine, emptyTokens, eta, mode, projected, segments, warnings } from './summarize'
+import { addUsage, bar, barSvg, cacheHit, compactLine, emptyTokens, eta, mode, projected, segments, warnings } from './summarize'
 import type { Segment } from './summarize'
 
 const now = Date.parse('2026-10-18T12:00:00Z')
@@ -27,6 +27,12 @@ test('eta: before reset gives a time, after reset gives null', () => {
 test('bar fills proportionally and clamps', () => {
   expect(bar(50)).toEqual(['━━━━', '────'])
   expect(bar(150)[0].length).toBe(8)
+})
+
+test('barSvg scales fill, clamps, omits empty fill', () => {
+  expect(barSvg(50, 'success')).toContain('<rect width="60" height="6" rx="3" fill="#3fb950"/>')
+  expect(barSvg(250, 'error')).toContain('width="120" height="6" rx="3" fill="#f85149"')
+  expect(barSvg(0, 'success').match(/<rect/g)!.length).toBe(1)
 })
 
 test('mode follows rate limits', () => {
