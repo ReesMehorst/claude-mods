@@ -262,14 +262,14 @@ export const register: Register = on => {
             <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
               {/* glyph outside the Button: the desktop draws a Button's label in one colour */}
               <Box flexDirection="row" columnGap={1}>
-                <Text color={r.tone}>{r.glyph}</Text>
+                <Box width={2}><Text color={r.tone}>{r.glyph}</Text></Box>{/* fixed width: ✓ and · differ, titles must line up */}
                 <Button key={`row-${r.key}`} plain onPress={() => pick(sel === r.key ? null : r.key)}>
                   <Text weight="medium" wrap="truncate-end">{d.title}</Text>
                 </Button>
               </Box>
               <Text size="caption" dimColor tabular>{r.age}</Text>
             </Box>
-            <Box flexDirection="row" columnGap={1} paddingLeft={2}>
+            <Box flexDirection="row" columnGap={1} paddingLeft={3}>
               <Text size="caption" dimColor wrap="truncate-end">{d.meta}</Text>
               {d.pills.map(pill)}
             </Box>
