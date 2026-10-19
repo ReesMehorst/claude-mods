@@ -40,7 +40,8 @@ A band above the prompt that shows where your session stands.
 - On a PR: `d` details (diff stat, mergeable state, reviewers, description), `a` approve
   (not on your own PRs), `y` mark a draft ready, `m` squash-merge and delete the branch.
   Merge asks for a second `m` press; changing the selection or Close cancels it.
-- Refreshes every 60 s while the pane is open; toasts when a PR's checks turn red.
+- Refreshes every 60 s while the pane is open, with toasts when a PR's checks turn red,
+  your review is requested, your PR is approved, or a run on your PR's branch finishes.
   Errors back off (up to 10 min); no repo or `gh` signed out pauses polling until `r`.
 
 ## Develop

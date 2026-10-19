@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Row, Snapshot, Tab } from '../types'
-import { confirmPress, issueRow, logTail, newlyFailed, nextDelay, prDetail, prRow, runRow } from './format'
+import type { Seen } from './format'
+import { confirmPress, issueRow, logTail, nextDelay, prDetail, prRow, runRow, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
@@ -28,7 +29,7 @@ async function gh($: $, args: string[], timeoutMs = 30_000) {
 }
 const ghJson = async ($: $, args: string[]) => JSON.parse(await gh($, args))
 
-let prevChecks: Map<number, boolean> | null = null // ponytail: module variable, resets on reload (no toast storm)
+let prevSeen: Seen | null = null // ponytail: module variable, resets on reload (no toast storm)
 let isRefreshing = false
 let isOpen = false // polls only while the pane is open
 let timer: Timer | null = null
@@ -65,16 +66,22 @@ async function refresh($: $): Promise<string | null> {
     viewer = login
     const cur = status?.currentBranch
     const prRows = prs.map((p: any) => prRow(p, now))
-    const mine = [...review, ...authored].map((p: any) => prRow(p, now))
+    const runRows = runs.map((r: any) => runRow(r, now))
+    const asked: Row[] = review.map((p: any) => prRow(p, now))
+    const yours: Row[] = authored.map((p: any) => prRow(p, now))
+    const mine = [...asked, ...yours]
       .filter((r: Row, i: number, all: Row[]) => all.findIndex(x => x.key === r.key) === i)
       .concat(assigned.map((i: any) => issueRow(i, now)))
 
-    for (const r of newlyFailed(prevChecks, prRows)) $.ui.toast(`✗ Checks failed on #${r.id}: ${r.title}`, { timeoutMs: 10_000 })
-    prevChecks = new Map(prRows.map((r: Row) => [r.id, r.isFailed]))
+    // ponytail: "your runs" = runs on your open PRs' branches; add `--user <login>` if pushes without a PR matter
+    const branches = new Set(authored.map((p: any) => p.headRefName))
+    const seen: Seen = { prs: prRows, asked, authored: yours, runs: runs.flatMap((r: any, i: number) => branches.has(r.headBranch) ? [runRows[i]] : []) }
+    for (const t of toasts(prevSeen, seen)) $.ui.toast(t, { timeoutMs: 10_000 })
+    prevSeen = seen
 
     await update($, snap, () => ({
       repo,
-      rows: { prs: prRows, checks: runs.map((r: any) => runRow(r, now)), issues: issues.map((i: any) => issueRow(i, now)), mine },
+      rows: { prs: prRows, checks: runRows, issues: issues.map((i: any) => issueRow(i, now)), mine },
       here: cur?.number ? { ...prRow(cur, now), key: 'here' } : null,
       at: now,
       error: null,

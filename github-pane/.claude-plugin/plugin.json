@@ -1,7 +1,7 @@
 {
   "name": "github-pane",
   "author": { "name": "ReesMehorst" },
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Live GitHub pane for the current repo: PRs with CI and review state, workflow runs, issues and what needs you; details, approve, ready, merge, checkout, rerun and failed logs in place.",
   "types": "./types/index.d.ts"
 }

@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { ago, checks, confirmPress, issueRow, logTail, newlyFailed, nextDelay, prDetail, prRow, runRow } from './format'
+import { ago, checks, confirmPress, issueRow, logTail, nextDelay, prDetail, prRow, runRow, toasts } from './format'
 
 const now = Date.parse('2026-10-19T12:00:00Z')
 
@@ -36,11 +36,25 @@ test('run and issue rows', () => {
     .toBe('#3 · bug · @rees')
 })
 
-test('newlyFailed only flags green-to-red', () => {
-  const red = { ...prRow({ number: 1, statusCheckRollup: [{ conclusion: 'FAILURE' }], updatedAt: '2026-10-19T11:00:00Z' }, now) }
-  expect(newlyFailed(null, [red])).toEqual([])
-  expect(newlyFailed(new Map([[1, true]]), [red])).toEqual([])
-  expect(newlyFailed(new Map([[1, false]]), [red]).length).toBe(1)
+test('toasts: first poll none, then one per change', () => {
+  const at = '2026-10-19T11:00:00Z'
+  const pr = (number: number, more: object = {}) => prRow({ number, title: `T${number}`, updatedAt: at, ...more }, now)
+  const run = (status: string, conclusion = '') => runRow({ databaseId: 9, status, conclusion, displayTitle: 'CI run', workflowName: 'CI', headBranch: 'feat', createdAt: at }, now)
+  const before = { prs: [pr(1, { statusCheckRollup: [{ conclusion: 'SUCCESS' }] })], asked: [pr(2)], authored: [pr(3, { reviewDecision: 'REVIEW_REQUIRED' })], runs: [run('in_progress')] }
+  const after = {
+    prs: [pr(1, { statusCheckRollup: [{ conclusion: 'FAILURE' }] })],
+    asked: [pr(2), pr(4)],
+    authored: [pr(3, { reviewDecision: 'APPROVED' }), pr(5, { reviewDecision: 'APPROVED' })],
+    runs: [run('completed', 'failure')],
+  }
+  expect(toasts(null, after)).toEqual([])
+  expect(toasts(before, after)).toEqual([
+    '✗ Checks failed on #1: T1',
+    'Review requested on #4: T4',
+    '✓ Approved #3: T3',
+    '✗ Run finished: CI run (CI · feat)',
+  ])
+  expect(toasts(after, after)).toEqual([])
 })
 
 test('logTail strips job/step and timestamp prefixes', () => {
