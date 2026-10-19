@@ -3,7 +3,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Detail, PrParts, Row, Snapshot, Tab, Tone } from '../types'
 import type { Empty, Pill, Seen } from './format'
-import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, prDetail, prRow, prText, runRow, toasts } from './format'
+import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow, logTail, matches, nextDelay, notifRow, prDetail, prRow, prText, runRow, tabCount, tabOption, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
@@ -170,12 +170,15 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link, Code, Markdown } = els
     const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
+    const Select = isApp && e.props.bodyColumns < 50 && 'Select' in els ? els.Select : null // narrow desktop pane: tabs as a picker
     const [s, t, sel, det, work, armed, q] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter)])
     const all = s.rows[t]
     const Input = isApp && 'Input' in els ? els.Input : null // the terminal keeps its tree; mobile has no field
     const query = Input ? q : ''
     const rows = all.filter(r => matches(r, query))
     const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
+    const go = (id: Tab) => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => '')])
+    const shown = (id: Tab) => id === t && query ? rows.length : undefined // filtered count, active tab only
     const merge = async (r: Row) => {
       const c = confirmPress(armed, r.key)
       await update($, confirm, () => c.armed)
@@ -280,7 +283,7 @@ export const register: Register = on => {
 
     const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={PILL_BG[p.tone]} color={p.tone}>{` ${p.text} `}</Text>
     const appRowView = (r: Row) => {
-      const d = desktopRow(r)
+      const d = desktopRow(r, !!Select)
       return (
         <Box key={r.key} flexDirection="column" backgroundColor={sel === r.key ? SELECTED_BG : undefined}>
           <Box key={`box-${r.key}`} flexDirection="column" paddingX={1} paddingY="xs" hover={{ backgroundColor: sel === r.key ? SELECTED_BG : HOVER_BG }}>
@@ -340,14 +343,30 @@ export const register: Register = on => {
           </Box>
         ) : null}
 
-        <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-          {TABS.map(([id, label], i) => (
-            <Button key={`tab-${id}`} hotkey={String(i + 1)} variant={id === t ? 'primary' : 'secondary'}
-              onPress={() => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => '')])}>
-              {`${label} ${id === t && query ? `${rows.length} / ${all.length}` : s.rows[id].length}`}
-            </Button>
-          ))}
-        </Box>
+        {Select ? (
+          <Select key="tab-select" label="View" value={t} onSelect={(v: string) => go(v as Tab)}
+            options={TABS.map(([id, label]) => ({ value: id, label: tabOption(label, s.rows[id], shown(id)) }))} />
+        ) : isApp ? (
+          <Box key="tabs" flexDirection="row" flexWrap="wrap" borderStyle="round" borderColor="subtle">
+            {TABS.map(([id, label], i) => (
+              <Box key={`seg-${id}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1}
+                backgroundColor={id === t ? SELECTED_BG : undefined} hover={{ backgroundColor: id === t ? SELECTED_BG : HOVER_BG }}>
+                <Button key={`tab-${id}`} hotkey={String(i + 1)} plain onPress={() => go(id)}>
+                  <Text weight={id === t ? 'semibold' : 'regular'}>{label}</Text>
+                </Button>
+                {pill(tabCount(s.rows[id], shown(id)))}
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+            {TABS.map(([id, label], i) => (
+              <Button key={`tab-${id}`} hotkey={String(i + 1)} variant={id === t ? 'primary' : 'secondary'} onPress={() => go(id)}>
+                {`${label} ${s.rows[id].length}`}
+              </Button>
+            ))}
+          </Box>
+        )}
 
         {errorText && isApp ? (
           <Box borderStyle="round" borderColor="error" paddingX={1}><Text color="error" wrap="wrap">{errorText}</Text></Box>

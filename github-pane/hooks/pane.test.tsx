@@ -115,13 +115,29 @@ test('desktop: filter narrows the tab, tab change clears it; empty tabs say why'
   await ui.input({ key: 'filter', text: 'zzz', kind: 'change' })
   expect(await ui.find({ text: /Add thing/ })).toBeUndefined()
   expect(await ui.find({ text: /No matches/ })).toBeDefined()
-  expect(await ui.find({ text: /Pull requests 0 \/ 1/ })).toBeDefined()
+  expect((await ui.find({ key: 'seg-prs' }))?.text).toBe('Pull requests 0 / 1 ')
   await ui.input({ key: 'filter', text: 'FEAT', kind: 'change' })
   expect(await ui.find({ text: /Add thing/ })).toBeDefined()
   expect(await ui.find({ text: /1 of 1 match/ })).toBeDefined()
   await ui.press({ key: 'tab-issues' })
   expect(await ui.find({ text: /No open issues in this repo\./ })).toBeDefined()
   await ui.press({ key: 'tab-prs' })
-  expect(await ui.find({ text: /Pull requests 1$/ })).toBeDefined() // filter cleared
+  expect((await ui.find({ key: 'seg-prs' }))?.text).toBe('Pull requests 1 ') // filter cleared
   await ui.unmount()
+})
+
+test('desktop: segmented tabs, red count on failing runs; narrow pane picks tabs from a Select', async ($, on) => {
+  await start($, on)
+  const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
+  expect((await ui.find({ key: 'seg-checks' }))?.children[1]).toMatchObject({ props: { color: 'error' } }) // count pill
+  expect(await ui.find({ key: 'tab-select' })).toBeUndefined()
+  await ui.unmount()
+
+  const slim = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: { ...PROPS, bodyColumns: 40 } } as any)
+  expect(await slim.find({ key: 'tabs' })).toBeUndefined()
+  expect(await slim.find({ key: 'tab-select' })).toMatchObject({ props: { label: 'View', value: 'prs' } })
+  expect(await slim.find({ text: /feat → main/ })).toBeUndefined() // narrow rows drop the branch
+  await slim.select({ key: 'tab-select', value: 'checks' })
+  expect(await slim.find({ text: /CI run/ })).toBeDefined()
+  await slim.unmount()
 })

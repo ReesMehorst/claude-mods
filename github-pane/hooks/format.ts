@@ -60,13 +60,15 @@ const REVIEW_PILL: Record<string, Pill> = {
 }
 
 // A row as the desktop draws it: title, meta line and pills (the terminal folds review and draft into the text).
-export const desktopRow = (r: Row): { title: string; meta: string; pills: Pill[] } => {
+// Narrow pane: no branch in the meta, one pill (a red one if any, else the first).
+export const desktopRow = (r: Row, narrow = false): { title: string; meta: string; pills: Pill[] } => {
   if (r.kind === 'pr') {
     const review = r.isDraft ? { text: 'Draft', tone: 'subtle' as Tone } : REVIEW_PILL[r.decision ?? '']
+    const pills = [...(review ? [review] : []), { text: CI[r.tone], tone: r.tone }]
     return {
       title: r.isDraft ? r.title.replace(/^\[draft\] /, '') : r.title,
-      meta: [`#${r.id}`, r.branch && r.base && `${r.branch} → ${r.base}`, r.author && `@${r.author}`].filter(Boolean).join(' · '),
-      pills: [...(review ? [review] : []), { text: CI[r.tone], tone: r.tone }],
+      meta: [`#${r.id}`, !narrow && r.branch && r.base && `${r.branch} → ${r.base}`, r.author && `@${r.author}`].filter(Boolean).join(' · '),
+      pills: narrow ? [pills.find(p => p.tone === 'error') ?? pills[0]] : pills,
     }
   }
   return { title: r.title, meta: r.sub, pills: r.kind === 'run' ? [{ text: RUN[r.tone], tone: r.tone }] : [] }
@@ -233,3 +235,15 @@ export const emptyState = (t: Tab, repo: string): Empty => ({
   mine: { title: 'Nothing waiting on you', line: 'Nothing waiting on you: no review requests, open PRs of yours or issues assigned to you.' },
   notifs: { title: 'No unread notifications', line: `No unread notifications for ${repo}. This tab shows this repo only.`, href: 'https://github.com/notifications' },
 })[t]
+
+// A tab's count pill: the total (`shown / total` while filtered), red when any row failed.
+export const tabCount = (rows: Row[], shown = rows.length): Pill => ({
+  text: shown === rows.length ? String(rows.length) : `${shown} / ${rows.length}`,
+  tone: rows.some(r => r.isFailed) ? 'error' : 'subtle',
+})
+
+// A tab as a narrow pane's Select option: `Checks (2 failing)`, else `Issues (4)`.
+export const tabOption = (label: string, rows: Row[], shown = rows.length) => {
+  const failing = rows.filter(r => r.isFailed).length
+  return `${label} (${failing ? `${failing} failing` : tabCount(rows, shown).text})`
+}
