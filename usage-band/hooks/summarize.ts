@@ -1,6 +1,6 @@
-import type { Snapshot, Tokens } from '../types'
+import type { Snapshot, Tokens, Trend } from '../types'
 
-export type Mode = 'plan' | 'api'
+export type Mode = 'plan' | 'api' | 'usage'
 export type Level = 'success' | 'warning' | 'error'
 export type Segment = {
   label: string
@@ -17,6 +17,7 @@ const LABEL: Record<string, string> = { five_hour: '5h limit', seven_day: 'Weekl
 const SHORT: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'limit' }
 
 export const emptyTokens: Tokens = { in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }
+export const emptyTrend: Trend = { lastCost: null, lastTurnUsd: null, ctxHistory: [] }
 
 export const num = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${n}`
@@ -30,7 +31,9 @@ export const clock = (ms: number, now: number) => {
 
 const level = (p: number, warn: number, err: number): Level => (p >= err ? 'error' : p >= warn ? 'warning' : 'success')
 
-export const mode = (s: Snapshot): Mode => (s.rateLimits.length ? 'plan' : 'api')
+// rateLimits is also empty on a plan until the first response reports them, so
+// no windows only means API once something has been billed.
+export const mode = (s: Snapshot): Mode => (s.rateLimits.length ? 'plan' : (s.costUsd ?? 0) > 0 ? 'api' : 'usage')
 
 export const bar = (percent: number, width = 8) => {
   const full = Math.max(0, Math.min(width, Math.round((percent / 100) * width)))
@@ -72,17 +75,38 @@ export const addUsage = (t: Tokens, u: { input_tokens: number; output_tokens: nu
   cacheWrite: t.cacheWrite + u.cache_creation_input_tokens,
 })
 
+// Records one finished turn: its cost and the context it left. A drop of over
+// 30% is a /compact or /clear, so growth before it no longer predicts anything.
+export const recordTurn = (t: Trend, costUsd: number | null, ctxTokens: number | null): Trend => {
+  const last = t.ctxHistory.at(-1)
+  const hist = ctxTokens == null ? t.ctxHistory : last != null && ctxTokens < last * 0.7 ? [ctxTokens] : [...t.ctxHistory, ctxTokens].slice(-5)
+  return {
+    lastCost: costUsd ?? t.lastCost,
+    lastTurnUsd: costUsd != null && t.lastCost != null ? costUsd - t.lastCost : null,
+    ctxHistory: hist,
+  }
+}
+
+// Turns until context reaches 80% at the recent average growth; null without a trend.
+export const turnsLeft = (hist: number[], window: number) => {
+  if (hist.length < 3) return null
+  const avg = (hist.at(-1)! - hist[0]!) / (hist.length - 1)
+  return avg > 0 ? Math.max(0, Math.ceil((0.8 * window - hist.at(-1)!) / avg)) : null
+}
+
 const hours = (s: Snapshot, now: number) => (now - s.startedAt) / 3600e3
 
-export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0): Segment[] => {
+export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, trend = emptyTrend): Segment[] => {
   const out: Segment[] = []
   const m = mode(s)
 
   const ctx = s.contextPercent
+  const left = turnsLeft(trend.ctxHistory, s.contextWindow)
   out.push({
     label: 'Context',
     value: ctx == null ? '–' : `${ctx}%`,
-    detail: s.contextTokens == null ? `${num(s.contextWindow)} window` : `${num(s.contextTokens)} of ${num(s.contextWindow)}`,
+    detail: [s.contextTokens == null ? `${num(s.contextWindow)} window` : `${num(s.contextTokens)} of ${num(s.contextWindow)}`,
+      left ? `~${left} turn${left === 1 ? '' : 's'} to 80%` : ''].filter(Boolean).join(' · '),
     short: `ctx ${ctx ?? '–'}%`,
     percent: ctx,
     level: level(ctx ?? 0, 60, 80),
@@ -107,22 +131,23 @@ export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0): Se
     const h = hours(s, now)
     const rate = h > 0.05 ? s.costUsd / h : null
     const usd = `$${s.costUsd.toFixed(2)}`
+    const turn = trend.lastTurnUsd ? `last +$${trend.lastTurnUsd.toFixed(2)}` : ''
     if (m === 'plan') {
-      out.push({ label: 'API value', value: usd, detail: 'included in plan', short: usd, percent: null, level: 'success', isMuted: true })
+      out.push({ label: 'API value', value: usd, detail: ['included in plan', turn].filter(Boolean).join(' · '), short: usd, percent: null, level: 'success', isMuted: true })
     } else if (budgetUsd > 0) {
       const pct = Math.round((s.costUsd / budgetUsd) * 100)
-      const left = budgetUsd - s.costUsd
-      const etaMs = rate && left > 0 ? now + (left / rate) * 3600e3 : null
+      const rest = budgetUsd - s.costUsd
+      const etaMs = rate && rest > 0 ? now + (rest / rate) * 3600e3 : null
       out.push({
         label: 'Spend',
         value: usd,
-        detail: [`of $${budgetUsd}`, rate ? `$${rate.toFixed(2)}/hr` : '', etaMs ? `budget ~${clock(etaMs, now)}` : left <= 0 ? 'over budget' : ''].filter(Boolean).join(' · '),
+        detail: [`of $${budgetUsd}`, rate ? `$${rate.toFixed(2)}/hr` : '', etaMs ? `budget ~${clock(etaMs, now)}` : rest <= 0 ? 'over budget' : '', turn].filter(Boolean).join(' · '),
         short: `${usd}/$${budgetUsd}`,
         percent: pct,
         level: level(pct, 75, 90),
       })
     } else {
-      out.push({ label: 'Spend', value: usd, detail: rate ? `$${rate.toFixed(2)}/hr` : 'this session', short: usd, percent: null, level: 'success' })
+      out.push({ label: 'Spend', value: usd, detail: [rate ? `$${rate.toFixed(2)}/hr` : 'this session', turn].filter(Boolean).join(' · '), short: usd, percent: null, level: 'success' })
     }
   }
 
@@ -148,9 +173,11 @@ export const compactLine = (m: Mode, segs: Segment[]) => [m.toUpperCase(), ...se
 export type Warning = { key: string; text: string }
 
 // Keys carry the window's reset so a fresh window can warn again.
-export const warnings = (s: Snapshot, now: number, budgetUsd = 0): Warning[] => {
+export const warnings = (s: Snapshot, now: number, budgetUsd = 0, trend = emptyTrend): Warning[] => {
   const out: Warning[] = []
+  const left = turnsLeft(trend.ctxHistory, s.contextWindow)
   if ((s.contextPercent ?? 0) >= 80) out.push({ key: 'ctx', text: `Context ${s.contextPercent}% full: consider /compact` })
+  else if (left != null && left <= 3) out.push({ key: `ctx-soon:${trend.ctxHistory[0]}`, text: `Context ~${left} turn${left === 1 ? '' : 's'} from 80% at this rate: consider /compact` })
   for (const r of s.rateLimits) {
     const p = projected(r.percentUsed, r.resetsAt, r.kind, now)
     if (Math.max(r.percentUsed, p ?? 0) < 100) continue
