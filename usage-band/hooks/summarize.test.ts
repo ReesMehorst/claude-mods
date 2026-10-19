@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { addUsage, bar, barSvg, cacheHit, compactLine, emptyTokens, eta, mode, projected, segments, warnings } from './summarize'
+import { addUsage, bar, barSvg, cacheHit, compactLine, emptyTokens, emptyTrend, eta, mode, projected, recordTurn, segments, turnsLeft, warnings } from './summarize'
 import type { Segment } from './summarize'
 
 const now = Date.parse('2026-10-18T12:00:00Z')
@@ -38,6 +38,7 @@ test('barSvg scales fill, clamps, omits empty fill', () => {
 test('mode follows rate limits', () => {
   expect(mode(plan)).toBe('plan')
   expect(mode(api)).toBe('api')
+  expect(mode({ ...api, costUsd: 0 })).toBe('usage')
 })
 
 test('plan segments: pace colour, API value muted, tokens', () => {
@@ -70,4 +71,29 @@ test('warnings: context, pace, budget', () => {
   expect(warnings(plan, now).map(w => w.key)).toEqual([`pace:five_hour:${reset}`])
   expect(warnings({ ...api, contextPercent: 85 }, now, 2.1).map(w => w.key)).toEqual(['ctx', 'budget:2.1'])
   expect(warnings(api, now, 10)).toEqual([])
+})
+
+test('turnsLeft: steady growth counts down, shrink or short history gives null', () => {
+  expect(turnsLeft([100000, 110000, 120000], 200000)).toBe(4)
+  expect(turnsLeft([100000, 110000], 200000)).toBe(null)
+  expect(turnsLeft([120000, 110000, 100000], 200000)).toBe(null)
+})
+
+test('recordTurn: cost delta, history capped, reset on compact', () => {
+  let t = recordTurn(emptyTrend, 1, 50000)
+  expect(t.lastTurnUsd).toBe(null)
+  t = recordTurn(t, 1.5, 60000)
+  expect(t.lastTurnUsd).toBe(0.5)
+  for (let i = 0; i < 5; i++) t = recordTurn(t, 2, 70000 + i)
+  expect(t.ctxHistory.length).toBe(5)
+  expect(recordTurn(t, 2, 20000).ctxHistory).toEqual([20000])
+})
+
+test('trend shows in segments and ctx-soon warns near 80%', () => {
+  const trend = { lastCost: 2, lastTurnUsd: 0.42, ctxHistory: [130000, 140000, 150000] }
+  const [ctx, , cost] = segments(plan, toks, now, 0, trend) as [Segment, Segment, Segment]
+  expect(ctx.detail).toBe('60k of 200k · ~1 turn to 80%')
+  expect(cost.detail).toBe('included in plan · last +$0.42')
+  expect(warnings(plan, now, 0, trend).map(w => w.key)).toContain('ctx-soon:130000')
+  expect(warnings(plan, now, 0, { ...trend, ctxHistory: [10000, 11000, 12000] }).map(w => w.key)).not.toContain('ctx-soon:10000')
 })
