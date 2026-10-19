@@ -44,6 +44,7 @@ export const prRow = (p: any, now: number): Row => {
     isFailed: c === FAIL,
     isDraft: !!p.isDraft,
     author: p.author?.login,
+    branch: p.headRefName,
     decision: p.reviewDecision || undefined,
   }
 }
@@ -64,6 +65,7 @@ export const runRow = (r: any, now: number): Row => {
     url: r.url,
     isFailed: s === FAIL,
     isPending: s === PENDING,
+    branch: r.headBranch,
   }
 }
 
@@ -100,9 +102,19 @@ export const toasts = (prev: Seen | null, next: Seen): string[] => {
   ]
 }
 
-// Failed-log tail: drop the "job\tstep\t" prefix gh puts on each line.
-export const logTail = (raw: string, lines = 30) =>
-  raw.split(/\r?\n/).filter(Boolean).slice(-lines).map(l => l.split('\t').at(-1)!.replace(/^\S+Z /, '')).join('\n')
+// Failed-log tail: drop the "job\tstep\t" prefix gh puts on each line, ANSI colours,
+// and each job's "Post job cleanup." section (it buries the error).
+export const logTail = (raw: string, lines = 30) => {
+  let job = ''
+  let cleanup = false
+  return raw.split(/\r?\n/).filter(Boolean)
+    .filter(l => {
+      const j = l.split('\t')[0]
+      if (j !== job) { job = j; cleanup = false }
+      return !(cleanup ||= l.endsWith('Post job cleanup.'))
+    })
+    .slice(-lines).map(l => l.split('\t').at(-1)!.replace(/^\S+Z /, '').replace(/\x1b\[[\d;]*m/g, '')).join('\n')
+}
 
 // Errors a retry can't fix: no repo, no remote, gh missing or signed out.
 const FATAL = /not a git repository|no git remotes|none of the git remotes|gh auth login|not logged in|ENOENT|executable file not found|command not found/i
@@ -131,3 +143,42 @@ export const prDetail = (p: any, bodyLines = 20) => {
 // Two-press confirm: first press on a key arms it, second press on the same key runs (and disarms).
 export const confirmPress = (armed: string | null, key: string) =>
   armed === key ? { run: true, armed: null } : { run: false, armed: key }
+
+// Notification subject URLs point at the API: PRs and issues map to their page, anything else to the repo.
+export const notifUrl = (n: any) => {
+  const m = /repos\/([^/]+\/[^/]+)\/(pulls|issues)\/(\d+)$/.exec(n.subject?.url ?? '')
+  return m ? `https://github.com/${m[1]}/${m[2] === 'pulls' ? 'pull' : 'issues'}/${m[3]}` : n.repository?.html_url ?? ''
+}
+
+// `gh api repos/<repo>/notifications` item → row; id is the thread id (for mark read).
+export const notifRow = (n: any, now: number): Row => ({
+  key: `notif-${n.id}`,
+  kind: 'notif',
+  id: Number(n.id),
+  glyph: n.unread ? '●' : '○',
+  tone: n.unread ? 'warning' : 'subtle',
+  title: clip(n.subject?.title),
+  sub: [String(n.reason ?? '').replace(/_/g, ' '), n.subject?.type].filter(Boolean).join(' · '),
+  age: ago(n.updated_at, now),
+  url: notifUrl(n),
+  isFailed: false,
+})
+
+// `gh pr checks --json link,state` → the first failed Actions run id, or null (external checks have no run).
+export const failedRunId = (cs: any[]) => {
+  for (const c of cs) {
+    const m = /\/actions\/runs\/(\d+)/.exec(c.link ?? '')
+    if (m && /FAIL|ERROR|CANCEL|TIMED_OUT/i.test(c.state ?? '')) return Number(m[1])
+  }
+  return null
+}
+
+// Draft for the prompt box: what failed, where, and the log tail.
+export const fixPrompt = (r: Row, runId: number, log: string) =>
+  [
+    `CI failed on ${r.kind === 'pr' ? `PR #${r.id}, ` : ''}run ${runId}${r.branch ? ` (branch ${r.branch})` : ''}.`,
+    '```',
+    logTail(log, 60),
+    '```',
+    'Find and fix the cause of this CI failure.',
+  ].join('\n')

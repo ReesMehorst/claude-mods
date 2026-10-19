@@ -1,8 +1,8 @@
-export type Tab = 'prs' | 'checks' | 'issues' | 'mine'
+export type Tab = 'prs' | 'checks' | 'issues' | 'mine' | 'notifs'
 export type Tone = 'success' | 'warning' | 'error' | 'subtle'
 export type Row = {
   key: string
-  kind: 'pr' | 'run' | 'issue'
+  kind: 'pr' | 'run' | 'issue' | 'notif'
   id: number
   glyph: string
   tone: Tone
@@ -15,6 +15,7 @@ export type Row = {
   author?: string // PRs only: login
   decision?: string // PRs only: raw reviewDecision
   isPending?: boolean // runs only: not completed
+  branch?: string // PRs and runs: head branch
 }
 export type Snapshot = {
   repo: string | null

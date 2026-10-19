@@ -3,15 +3,15 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Row, Snapshot, Tab } from '../types'
 import type { Seen } from './format'
-import { confirmPress, issueRow, logTail, nextDelay, prDetail, prRow, runRow, toasts } from './format'
+import { confirmPress, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, prDetail, prRow, runRow, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
-const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me']]
+const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me'], ['notifs', 'Notifications']]
 const DETAIL_FIELDS = 'body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles'
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
 const ISSUE_FIELDS = 'number,title,labels,assignees,updatedAt,url'
-const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [] }, here: null, at: 0, error: null }
+const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [], notifs: [] }, here: null, at: 0, error: null }
 
 const snap = atom({ plugin: 'github-pane', key: 'snap' } as const, EMPTY)
 const tab = atom({ plugin: 'github-pane', key: 'tab' } as const, 'prs' as Tab)
@@ -53,7 +53,7 @@ async function refresh($: $): Promise<string | null> {
   try {
     const repo = (await ghJson($, ['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner as string
     const now = await $.clock.now()
-    const [prs, runs, issues, review, authored, assigned, status, login] = await Promise.all([
+    const [prs, runs, issues, review, authored, assigned, status, login, notifs] = await Promise.all([
       ghJson($, ['pr', 'list', '-L', '30', '--json', PR_FIELDS]),
       ghJson($, ['run', 'list', '-L', '20', '--json', 'databaseId,displayTitle,status,conclusion,workflowName,headBranch,event,createdAt,url']),
       ghJson($, ['issue', 'list', '-L', '30', '--json', ISSUE_FIELDS]),
@@ -62,6 +62,7 @@ async function refresh($: $): Promise<string | null> {
       ghJson($, ['issue', 'list', '--assignee', '@me', '--json', ISSUE_FIELDS]),
       ghJson($, ['pr', 'status', '--json', PR_FIELDS]).catch(() => null), // detached HEAD etc.: no header, not an error
       viewer ?? gh($, ['api', 'user', '-q', '.login']).then(o => o.trim() || null, () => null),
+      ghJson($, ['api', `repos/${repo}/notifications`]).catch(() => []), // token without notifications scope: empty tab, not an error
     ])
     viewer = login
     const cur = status?.currentBranch
@@ -81,7 +82,7 @@ async function refresh($: $): Promise<string | null> {
 
     await update($, snap, () => ({
       repo,
-      rows: { prs: prRows, checks: runRows, issues: issues.map((i: any) => issueRow(i, now)), mine },
+      rows: { prs: prRows, checks: runRows, issues: issues.map((i: any) => issueRow(i, now)), mine, notifs: notifs.map((n: any) => notifRow(n, now)) },
       here: cur?.number ? { ...prRow(cur, now), key: 'here' } : null,
       at: now,
       error: null,
@@ -106,6 +107,27 @@ async function act($: $, label: string, args: string[], show: (out: string) => s
     if (refreshAfter) void poll($)
   } catch (err: any) {
     await update($, detail, () => `${label} failed: ${err?.message ?? err}`)
+  } finally {
+    await update($, busy, () => null)
+  }
+}
+
+// Fills the prompt box with a failed run's log and a fix request; never sends it.
+async function fix($: $, r: Row) {
+  await update($, busy, () => `Fix #${r.id}`)
+  try {
+    let runId: number | null = r.id
+    if (r.kind === 'pr') {
+      // gh exits non-zero when checks fail, so read stdout directly
+      const c = await $.process.run(['gh', 'pr', 'checks', String(r.id), '--json', 'link,state'], { timeoutMs: 30_000 })
+      runId = failedRunId(JSON.parse(c.stdout || '[]'))
+      if (!runId) throw new Error('no failed GitHub Actions run on this PR')
+    }
+    const log = await gh($, ['run', 'view', String(runId), '--log-failed'], 120_000)
+    const res = await $.prompt.fill({ text: fixPrompt(r, runId, log) })
+    await update($, detail, () => res.isFilled ? 'Fix request is in the prompt box: edit it, then press Enter to send.' : `Couldn't fill the prompt box${res.refusal ? ` (${res.refusal})` : ''}.`)
+  } catch (err: any) {
+    await update($, detail, () => `Fix failed: ${err?.message ?? err}`)
   } finally {
     await update($, busy, () => null)
   }
@@ -173,6 +195,12 @@ export const register: Register = on => {
         {r.kind === 'run' && r.isFailed ? (
           <Button key="log" hotkey="l" onPress={() => act($, 'Failed log', ['run', 'view', String(r.id), '--log-failed'], o => logTail(o) || 'No failed-step log.')}>Failed log</Button>
         ) : null}
+        {(r.kind === 'run' || r.kind === 'pr') && r.isFailed ? (
+          <Button key="fix" hotkey="f" onPress={() => fix($, r)}>Fix with Claude</Button>
+        ) : null}
+        {r.kind === 'notif' ? (
+          <Button key="read" hotkey="e" onPress={() => act($, 'Mark read', ['api', '-X', 'PATCH', `notifications/threads/${r.id}`], () => 'Marked read')}>Mark read</Button>
+        ) : null}
         {r.kind === 'pr' && r.isFailed ? (
           <Button key="prchecks" hotkey="l" onPress={() => act($, 'Checks', ['pr', 'checks', String(r.id)], o => o.trim())}>Show checks</Button>
         ) : null}
@@ -219,7 +247,7 @@ export const register: Register = on => {
         {s.error ? <Text color="error">{s.repo ? `Refresh failed: ${s.error}` : `No GitHub repo here (${s.error}). Run /github from a cloned repo with gh signed in.`}</Text> : null}
 
         <Box flexDirection="column">
-          {rows.length === 0 && s.at ? <Text dimColor>{t === 'mine' ? 'Nothing waiting on you.' : 'Nothing here.'}</Text> : null}
+          {rows.length === 0 && s.at ? <Text dimColor>{t === 'mine' ? 'Nothing waiting on you.' : t === 'notifs' ? 'No unread notifications.' : 'Nothing here.'}</Text> : null}
           {rows.map(rowView)}
         </Box>
 

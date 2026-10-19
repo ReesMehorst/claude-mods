@@ -6,7 +6,11 @@ const now = Date.parse('2026-10-19T12:00:00Z')
 const PR = { number: 5, title: 'Add thing', isDraft: true, author: { login: 'ann' }, headRefName: 'feat', baseRefName: 'main', statusCheckRollup: [], updatedAt: '2026-10-19T11:00:00Z', url: 'https://github.com/o/r/pull/5' }
 const PROPS = { title: 'GitHub', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { top: 0, bodyRows: 40 } } as unknown as RenderPropsOf['Pane']
 
+const NOTIF = { id: '42', unread: true, reason: 'mention', updated_at: '2026-10-19T11:00:00Z', subject: { title: 'Ping', type: 'Issue', url: 'https://api.github.com/repos/o/r/issues/3' } }
+const RUN = { databaseId: 9, status: 'completed', conclusion: 'failure', displayTitle: 'CI run', workflowName: 'CI', headBranch: 'feat', createdAt: '2026-10-19T11:00:00Z', url: 'u' }
+
 const ran: string[][] = []
+const filled: string[] = []
 
 async function start($: Engine, on: On) {
   mock.clock(on, { now })
@@ -18,7 +22,11 @@ async function start($: Engine, on: On) {
     const a = e.argv.slice(1)
     ran.push(a)
     const out = a[0] === 'repo' ? { nameWithOwner: 'o/r' }
-      : a[0] === 'api' ? 'me'
+      : a[0] === 'api' && a[1] === 'user' ? 'me'
+      : a[0] === 'api' && a[1].endsWith('/notifications') ? [NOTIF]
+      : a[0] === 'api' ? ''
+      : a[0] === 'run' && a[1] === 'list' ? [RUN]
+      : a[0] === 'run' && a[1] === 'view' ? 'build\tstep\t2026-10-19T11:00:00Z boom'
       : a[0] === 'pr' && a[1] === 'status' ? { currentBranch: null }
       : a[0] === 'pr' && a[1] === 'view' ? { additions: 1, deletions: 2, changedFiles: 3, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', body: 'hello' }
       : a[0] === 'pr' && a[1] === 'list' ? [PR]
@@ -26,6 +34,7 @@ async function start($: Engine, on: On) {
       : []
     return { value: { exitCode: 0, stdout: typeof out === 'string' ? out : JSON.stringify(out), stderr: '' } }
   })
+  on('prompt.fill', (_$, e) => { filled.push(e.text); return { isFilled: true } })
   await $.session.start({ cwd: '/', surface: null, isInteractive: true })
   await $.command.run({ command: 'github', args: '' } as any)
 }
@@ -49,4 +58,23 @@ test('pane draws on every surface; details, ready, two-press merge', async ($, o
     await ui.press({ key: 'row-pr-5' }) // deselect for the next surface
     await ui.unmount()
   }
+})
+
+test('notifications tab marks read; fix fills the prompt box without sending', async ($, on) => {
+  await start($, on)
+  ran.length = 0
+  const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'terminal', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
+  await ui.press({ key: 'tab-notifs' })
+  expect(await ui.find({ text: /Ping/ })).toBeDefined()
+  await ui.press({ key: 'row-notif-42' })
+  await ui.press({ key: 'read' })
+  expect(ran.some(a => a.join(' ') === 'api -X PATCH notifications/threads/42')).toBe(true)
+
+  await ui.press({ key: 'tab-checks' })
+  await ui.press({ key: 'row-run-9' })
+  await ui.press({ key: 'fix' })
+  expect(filled.at(-1)).toContain('CI failed on run 9 (branch feat).')
+  expect(filled.at(-1)).toContain('boom')
+  expect(await ui.find({ text: /prompt box/ })).toBeDefined()
+  await ui.unmount()
 })
