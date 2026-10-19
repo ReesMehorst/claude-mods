@@ -36,7 +36,7 @@ A band above the prompt that shows where your session stands.
   (review requests, your PRs, issues assigned to you), **Notifications** (unread, this repo).
   Hotkeys `1`–`5`, `r` refresh.
   In the desktop app the tabs are one segmented row with a count pill each (red when the tab
-  has failing items); in a narrow pane they become a **View** picker and rows drop the branch.
+  has failing items); in a narrow pane they become a full-width **View** dropdown and rows drop the branch.
 - Each row: CI status, title, branch → base, author, review state, age.
   In the desktop app a row is two lines, with review and CI as coloured pills; a selected
   row opens a card under it with its actions and details: the PR description as formatted

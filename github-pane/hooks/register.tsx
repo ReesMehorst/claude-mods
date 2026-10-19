@@ -25,6 +25,7 @@ const detail = atom({ plugin: 'github-pane', key: 'detail' } as const, null as D
 const busy = atom({ plugin: 'github-pane', key: 'busy' } as const, null as string | null)
 const confirm = atom({ plugin: 'github-pane', key: 'confirm' } as const, null as string | null) // row key armed for merge
 const filter = atom({ plugin: 'github-pane', key: 'filter' } as const, '') // desktop list filter, cleared on tab change
+const menu = atom({ plugin: 'github-pane', key: 'menu' } as const, false) // narrow desktop pane: View dropdown open
 
 type $ = EngineInterface
 
@@ -171,14 +172,15 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Link, Code, Markdown } = els
     const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
-    const Select = isApp && e.props.bodyColumns < NARROW_COLS && 'Select' in els ? els.Select : null // narrow desktop pane: tabs as a picker
-    const [s, t, sel, det, work, armed, q] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter)])
+    // narrow desktop pane: tabs as a full-width View dropdown (a native Select can't be widened)
+    const narrow = isApp && e.props.bodyColumns < NARROW_COLS
+    const [s, t, sel, det, work, armed, q, isMenu] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm), read($, filter), read($, menu)])
     const all = s.rows[t]
     const Input = isApp && 'Input' in els ? els.Input : null // the terminal keeps its tree; mobile has no field
     const query = Input ? q : ''
     const rows = all.filter(r => matches(r, query))
     const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
-    const go = (id: Tab) => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => '')])
+    const go = (id: Tab) => Promise.all([update($, tab, () => id), pick(null), update($, filter, () => ''), update($, menu, () => false)])
     const shown = (id: Tab) => id === t && query ? rows.length : undefined // filtered count, active tab only
     const merge = async (r: Row) => {
       const c = confirmPress(armed, r.key)
@@ -284,7 +286,7 @@ export const register: Register = on => {
 
     const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={PILL_BG[p.tone]} color={p.tone}>{` ${p.text} `}</Text>
     const appRowView = (r: Row) => {
-      const d = desktopRow(r, !!Select)
+      const d = desktopRow(r, narrow)
       return (
         <Box key={r.key} flexDirection="column" backgroundColor={sel === r.key ? SELECTED_BG : undefined}>
           <Box key={`box-${r.key}`} flexDirection="column" paddingX={1} paddingY="xs" hover={{ backgroundColor: sel === r.key ? SELECTED_BG : HOVER_BG }}>
@@ -344,9 +346,30 @@ export const register: Register = on => {
           </Box>
         ) : null}
 
-        {Select ? (
-          <Select key="tab-select" label="View" value={t} onSelect={(v: string) => go(v as Tab)}
-            options={TABS.map(([id, label]) => ({ value: id, label: tabOption(label, s.rows[id], shown(id)) }))} />
+        {narrow ? (
+          <Box key="view" flexDirection="column" width="100%">
+            <Box key="view-trigger" flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1} paddingX={1}
+              borderStyle="round" borderColor="subtle" hover={{ backgroundColor: HOVER_BG }}>
+              <Box flexDirection="row" alignItems="center" columnGap={1}>
+                <Text size="caption" dimColor>View</Text>
+                <Button key="tab-menu" plain onPress={() => update($, menu, m => !m)}>
+                  <Text weight="semibold">{tabOption(TABS.find(([id]) => id === t)![1], all, shown(t))}</Text>
+                </Button>
+              </Box>
+              <Text dimColor>{isMenu ? '▴' : '▾'}</Text>
+            </Box>
+            {isMenu ? (
+              <Box key="view-options" flexDirection="column" borderStyle="round" borderColor="subtle">
+                {TABS.map(([id, label], i) => (
+                  <Box key={`opt-box-${id}`} paddingX={1} backgroundColor={id === t ? SELECTED_BG : undefined} hover={{ backgroundColor: id === t ? SELECTED_BG : HOVER_BG }}>
+                    <Button key={`opt-${id}`} hotkey={String(i + 1)} plain onPress={() => go(id)}>
+                      <Text weight={id === t ? 'semibold' : 'regular'}>{tabOption(label, s.rows[id], shown(id))}</Text>
+                    </Button>
+                  </Box>
+                ))}
+              </Box>
+            ) : null}
+          </Box>
         ) : isApp ? (
           <Box key="tabs" flexDirection="row" flexWrap="wrap" borderStyle="round" borderColor="subtle">
             {TABS.map(([id, label], i) => (

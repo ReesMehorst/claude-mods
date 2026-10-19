@@ -126,18 +126,22 @@ test('desktop: filter narrows the tab, tab change clears it; empty tabs say why'
   await ui.unmount()
 })
 
-test('desktop: segmented tabs, red count on failing runs; narrow pane picks tabs from a Select', async ($, on) => {
+test('desktop: segmented tabs, red count on failing runs; narrow pane picks tabs from a View dropdown', async ($, on) => {
   await start($, on)
   const ui = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
   expect((await ui.find({ key: 'seg-checks' }))?.children[1]).toMatchObject({ props: { color: 'error' } }) // count pill
-  expect(await ui.find({ key: 'tab-select' })).toBeUndefined()
+  expect(await ui.find({ key: 'tab-menu' })).toBeUndefined()
   await ui.unmount()
 
   const slim = await $.ui.mount({ plugin: 'github-pane', surface: 'desktop', component: 'Pane', requestId: 'github-pane', props: { ...PROPS, bodyColumns: 40 } } as any)
   expect(await slim.find({ key: 'tabs' })).toBeUndefined()
-  expect(await slim.find({ key: 'tab-select' })).toMatchObject({ props: { label: 'View', value: 'prs' } })
+  expect((await slim.find({ key: 'tab-menu' }))?.text).toBe('Pull requests (1)')
+  expect(await slim.find({ key: 'opt-checks' })).toBeUndefined() // closed until pressed
   expect(await slim.find({ text: /feat → main/ })).toBeUndefined() // narrow rows drop the branch
-  await slim.select({ key: 'tab-select', value: 'checks' })
+  await slim.press({ key: 'tab-menu' })
+  expect((await slim.find({ key: 'opt-checks' }))?.text).toBe('Checks (1 failing)')
+  await slim.press({ key: 'opt-checks' })
+  expect(await slim.find({ key: 'opt-checks' })).toBeUndefined() // a pick closes it
   expect(await slim.find({ text: /CI run/ })).toBeDefined()
   await slim.unmount()
 })
