@@ -7,7 +7,7 @@ import { confirmPress, desktopRow, emptyState, failedRunId, fixPrompt, issueRow,
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
-const NARROW_COLS = 80 // below this the desktop draws tabs as a View picker: the segmented row needs ~75
+const NARROW_COLS = 65 // below this the desktop draws tabs as a View picker
 const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], ['issues', 'Issues'], ['mine', 'For me'], ['notifs', 'Notifications']]
 const DETAIL_FIELDS = 'body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles'
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
@@ -345,10 +345,8 @@ export const register: Register = on => {
         ) : null}
 
         {Select ? (
-          <Box width="100%" flexDirection="column" alignItems="stretch">{/* Select has no width prop: its column stretches it */}
-            <Select key="tab-select" label="View" value={t} onSelect={(v: string) => go(v as Tab)}
-              options={TABS.map(([id, label]) => ({ value: id, label: tabOption(label, s.rows[id], shown(id)) }))} />
-          </Box>
+          <Select key="tab-select" label="View" value={t} onSelect={(v: string) => go(v as Tab)}
+            options={TABS.map(([id, label]) => ({ value: id, label: tabOption(label, s.rows[id], shown(id)) }))} />
         ) : isApp ? (
           <Box key="tabs" flexDirection="row" flexWrap="wrap" borderStyle="round" borderColor="subtle">
             {TABS.map(([id, label], i) => (
@@ -377,9 +375,7 @@ export const register: Register = on => {
 
         {Input && all.length ? (
           <Box key="filter-row" flexDirection="row" alignItems="center" columnGap={1}>
-            <Box flexGrow={1} flexDirection="column" alignItems="stretch">{/* Input has no width prop: its column stretches it */}
-              <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
-            </Box>
+            <Input key="filter" placeholder="Filter" value={q} onInput={(v: string) => update($, filter, () => v)} onSubmit={() => {}} />
             {q ? <Button key="clear-filter" label="Clear filter" plain dimColor onPress={() => update($, filter, () => '')}><Text>✕</Text></Button> : null}
           </Box>
         ) : null}
