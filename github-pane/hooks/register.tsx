@@ -247,7 +247,7 @@ export const register: Register = on => {
       <Box key="detail" flexDirection="column" rowGap="xs" paddingTop="xs">
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
           <Text size="caption" dimColor tabular wrap="truncate-end">{d.pr ? `${d.pr.stat} · ${d.pr.merge}` : ''}</Text>
-          <Button key="close-detail" label="Close details" plain dimColor onPress={closeDetail}>✕</Button>
+          <Button key="close-detail" plain dimColor onPress={closeDetail}>✕ Close details</Button>
         </Box>
         {d.pr ? prParts(d.pr) : d.code ? <Code source={d.text} wrap="wrap" /> : <Text wrap="wrap">{d.text}</Text>}
       </Box>
