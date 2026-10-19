@@ -45,6 +45,14 @@ test('pane draws on every surface; details, ready, two-press merge', async ($, o
     ran.length = 0
     const ui = await $.ui.mount({ plugin: 'github-pane', surface, component: 'Pane', requestId: 'github-pane', props: PROPS } as any)
     expect(await ui.find({ text: /Add thing/ })).toBeDefined()
+    if (surface === 'desktop') {
+      expect(await ui.find({ key: 'box-pr-5' })).toBeDefined()
+      expect(await ui.find({ text: / Draft / })).toBeDefined()
+      expect(await ui.find({ text: / No checks / })).toBeDefined()
+    } else {
+      expect(await ui.find({ key: 'box-pr-5' })).toBeUndefined()
+      expect(await ui.find({ text: /\[draft\] Add thing/ })).toBeDefined()
+    }
     await ui.press({ key: 'row-pr-5' })
     await ui.press({ key: 'details' })
     expect(await ui.find({ text: /\+1 −2 · 3 files/ })).toBeDefined()

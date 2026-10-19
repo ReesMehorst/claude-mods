@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Row, Snapshot, Tab } from '../types'
-import type { Seen } from './format'
-import { confirmPress, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, prDetail, prRow, runRow, toasts } from './format'
+import type { Pill, Seen } from './format'
+import { confirmPress, desktopRow, failedRunId, fixPrompt, issueRow, logTail, nextDelay, notifRow, prDetail, prRow, runRow, toasts } from './format'
 
 const PANE = 'github-pane'
 const EVERY_MS = 60_000
@@ -11,6 +11,9 @@ const TABS: [Tab, string][] = [['prs', 'Pull requests'], ['checks', 'Checks'], [
 const DETAIL_FIELDS = 'body,reviewRequests,latestReviews,mergeable,mergeStateStatus,additions,deletions,changedFiles'
 const PR_FIELDS = 'number,title,author,isDraft,headRefName,baseRefName,reviewDecision,statusCheckRollup,updatedAt,url'
 const ISSUE_FIELDS = 'number,title,labels,assignees,updatedAt,url'
+// shortcut: raw translucent tints read on light and dark; swap for theme keys if the desktop theme gets row-tint ones
+const HOVER_BG = 'rgba(127,127,127,0.12)'
+const SELECTED_BG = 'rgba(70,120,220,0.16)'
 const EMPTY: Snapshot = { repo: null, rows: { prs: [], checks: [], issues: [], mine: [], notifs: [] }, here: null, at: 0, error: null }
 
 const snap = atom({ plugin: 'github-pane', key: 'snap' } as const, EMPTY)
@@ -160,6 +163,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const isApp = e.surface !== 'terminal' // the terminal keeps its tree; its element table has Markdown too
     const [s, t, sel, det, work, armed] = await Promise.all([read($, snap), read($, tab), read($, selected), read($, detail), read($, busy), read($, confirm)])
     const rows = s.rows[t]
     const pick = (key: string | null) => Promise.all([update($, selected, () => key), update($, detail, () => null), update($, confirm, () => null)])
@@ -218,20 +222,57 @@ export const register: Register = on => {
       </Box>
     )
 
+    const pill = (p: Pill) => <Text key={`pill-${p.text}`} size="caption" backgroundColor={p.tone} color="inverseText">{` ${p.text} `}</Text>
+    const appRowView = (r: Row) => {
+      const d = desktopRow(r)
+      return (
+        <Box key={r.key} flexDirection="column">
+          <Box key={`box-${r.key}`} flexDirection="column" paddingX={1} paddingY="xs"
+            backgroundColor={sel === r.key ? SELECTED_BG : undefined} hover={{ backgroundColor: sel === r.key ? SELECTED_BG : HOVER_BG }}>
+            <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
+              <Button key={`row-${r.key}`} plain onPress={() => pick(sel === r.key ? null : r.key)}>
+                <Text color={r.tone}>{`${r.glyph} `}</Text>
+                <Text weight="medium" wrap="truncate-end">{d.title}</Text>
+              </Button>
+              <Text size="caption" dimColor tabular>{r.age}</Text>
+            </Box>
+            <Box flexDirection="row" columnGap={1} paddingLeft={2}>
+              <Text size="caption" dimColor wrap="truncate-end">{d.meta}</Text>
+              {d.pills.map(pill)}
+            </Box>
+          </Box>
+          {sel === r.key ? actions(r) : null}
+        </Box>
+      )
+    }
+    const row = isApp ? appRowView : rowView
+    const status = work ? `${work}…` : time ? `updated ${time} · ${timer ? `every ${delay / 1000}s` : 'paused, press r'}` : 'loading…'
+    const errorText = s.error ? (s.repo ? `Refresh failed: ${s.error}` : `No GitHub repo here (${s.error}). Run /github from a cloned repo with gh signed in.`) : null
+
     return (
       <Box flexDirection="column" rowGap={1}>
-        <Box flexDirection="row" justifyContent="space-between" flexWrap="wrap" columnGap={2}>
-          <Text weight="bold">{s.repo ?? 'GitHub'}</Text>
-          <Box flexDirection="row" columnGap={2}>
-            <Text dimColor size="caption">{work ? `${work}…` : time ? `updated ${time} · ${timer ? `every ${delay / 1000}s` : 'paused, press r'}` : 'loading…'}</Text>
-            <Button key="refresh" hotkey="r" plain onPress={() => poll($)}>↻ Refresh</Button>
+        {isApp ? (
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2}>
+            <Box flexDirection="column">
+              <Text size="heading" weight="semibold" wrap="truncate-end">{s.repo ?? 'GitHub'}</Text>
+              <Text dimColor size="caption">{status}</Text>
+            </Box>
+            <Button key="refresh" hotkey="r" plain onPress={() => poll($)}>Refresh</Button>
           </Box>
-        </Box>
+        ) : (
+          <Box flexDirection="row" justifyContent="space-between" flexWrap="wrap" columnGap={2}>
+            <Text weight="bold">{s.repo ?? 'GitHub'}</Text>
+            <Box flexDirection="row" columnGap={2}>
+              <Text dimColor size="caption">{status}</Text>
+              <Button key="refresh" hotkey="r" plain onPress={() => poll($)}>↻ Refresh</Button>
+            </Box>
+          </Box>
+        )}
 
         {s.repo && s.at ? (
           <Box key="here" flexDirection="column">
             <Text dimColor size="caption">This branch</Text>
-            {s.here ? rowView(s.here) : <Text dimColor>  No PR for this branch.</Text>}
+            {s.here ? row(s.here) : <Text dimColor>{isApp ? 'No PR for this branch.' : '  No PR for this branch.'}</Text>}
           </Box>
         ) : null}
 
@@ -244,11 +285,13 @@ export const register: Register = on => {
           ))}
         </Box>
 
-        {s.error ? <Text color="error">{s.repo ? `Refresh failed: ${s.error}` : `No GitHub repo here (${s.error}). Run /github from a cloned repo with gh signed in.`}</Text> : null}
+        {errorText && isApp ? (
+          <Box borderStyle="round" borderColor="error" paddingX={1}><Text color="error" wrap="wrap">{errorText}</Text></Box>
+        ) : errorText ? <Text color="error">{errorText}</Text> : null}
 
         <Box flexDirection="column">
           {rows.length === 0 && s.at ? <Text dimColor>{t === 'mine' ? 'Nothing waiting on you.' : t === 'notifs' ? 'No unread notifications.' : 'Nothing here.'}</Text> : null}
-          {rows.map(rowView)}
+          {rows.map(row)}
         </Box>
 
         {det ? (

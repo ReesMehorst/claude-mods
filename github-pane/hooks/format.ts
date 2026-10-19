@@ -45,8 +45,31 @@ export const prRow = (p: any, now: number): Row => {
     isDraft: !!p.isDraft,
     author: p.author?.login,
     branch: p.headRefName,
+    base: p.baseRefName,
     decision: p.reviewDecision || undefined,
   }
+}
+
+export type Pill = { text: string; tone: Tone }
+const CI: Record<Tone, string> = { success: 'CI passing', error: 'CI failing', warning: 'CI running', subtle: 'No checks' }
+const RUN: Record<Tone, string> = { success: 'Passed', error: 'Failed', warning: 'Running', subtle: 'Skipped' }
+const REVIEW_PILL: Record<string, Pill> = {
+  APPROVED: { text: 'Approved', tone: 'success' },
+  CHANGES_REQUESTED: { text: 'Changes requested', tone: 'error' },
+  REVIEW_REQUIRED: { text: 'Review required', tone: 'warning' },
+}
+
+// A row as the desktop draws it: title, meta line and pills (the terminal folds review and draft into the text).
+export const desktopRow = (r: Row): { title: string; meta: string; pills: Pill[] } => {
+  if (r.kind === 'pr') {
+    const review = r.isDraft ? { text: 'Draft', tone: 'subtle' as Tone } : REVIEW_PILL[r.decision ?? '']
+    return {
+      title: r.isDraft ? r.title.replace(/^\[draft\] /, '') : r.title,
+      meta: [`#${r.id}`, r.branch && r.base && `${r.branch} → ${r.base}`, r.author && `@${r.author}`].filter(Boolean).join(' · '),
+      pills: [...(review ? [review] : []), { text: CI[r.tone], tone: r.tone }],
+    }
+  }
+  return { title: r.title, meta: r.sub, pills: r.kind === 'run' ? [{ text: RUN[r.tone], tone: r.tone }] : [] }
 }
 
 export const runRow = (r: any, now: number): Row => {
