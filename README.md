@@ -27,6 +27,8 @@ A band above the prompt that shows where your session stands.
 - **Warnings** as toasts: context ≥ 80%, a limit on pace past 100%, spend ≥ 90% of budget.
 - `/usage-band` toggles a compact one-line view (remembered across sessions).
 
+<img width="782" height="256" alt="image" src="https://github.com/user-attachments/assets/11e24f74-ddf0-4bcb-afa6-664acc065c97" />
+
 ### github-pane
 
 `/github` opens a live pane for the repo you're in (needs the [`gh`](https://cli.github.com) CLI, signed in).
