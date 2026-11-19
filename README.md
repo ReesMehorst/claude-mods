@@ -57,6 +57,9 @@ A band above the prompt that shows where your session stands.
   your review is requested, your PR is approved, or a run on your PR's branch finishes.
   Errors back off (up to 10 min); no repo or `gh` signed out pauses polling until `r`.
 
+<img width="724" height="978" alt="image" src="https://github.com/user-attachments/assets/1c2217b3-0fcb-4dc6-a153-a09ec6912e1d" />
+<img width="722" height="928" alt="image" src="https://github.com/user-attachments/assets/7282696a-db99-4a64-95e6-11548bd338f0" />
+
 ## Develop
 
 ```
