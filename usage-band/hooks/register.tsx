@@ -5,6 +5,7 @@ import type { DayLog, Snapshot } from '../types'
 import { addUsage, bar, cacheAlerts, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, leadMs, mode, projected, recordDay, recordPing, recordTurn, segments, startTurn, suggest, warnings } from './summarize'
 import type { Segment } from './summarize'
 import { dayTilesSvg, gaugeSvg, iconSvg, mascotSvg, miniMeterSvg, paceSvg, ringSvg, splitSvg, thermometerSvg } from './art'
+import type { IconName } from './art'
 
 const snap = atom({ plugin: 'usage-band', key: 'snap' } as const, null)
 const tokens = atom({ plugin: 'usage-band', key: 'tokens' } as const, emptyTokens)
@@ -237,9 +238,9 @@ export const register: Register = (on, options) => {
 
       // A dropdown under ⋯, drawn over the segments. The band grows to hold it while open,
       // since a placed Box is clipped by the band. void: command.run is queued until idle.
-      const item = (key: string, icon: 'context' | 'cache' | 'clock' | 'calendar' | 'coin' | 'tokens' | null, label: string, onPress: () => unknown, aside?: RenderChildren) => (
+      const item = (key: string, icon: IconName, label: string, onPress: () => unknown, aside?: RenderChildren) => (
         <Box key={`row-${key}`} flexDirection="row" alignItems="center" columnGap="sm">
-          {icon ? art(iconSvg(icon, MUTED_HEX), label) : <Box width={2} />}
+          {art(iconSvg(icon, MUTED_HEX), label)}
           <Button key={key} plain onPress={onPress}>{label}</Button>
           <Box flexGrow={1} />
           {aside ?? null}
@@ -252,11 +253,11 @@ export const register: Register = (on, options) => {
             paddingX={1} paddingY="xs" borderStyle="round" borderColor="subtle" backgroundColor="rgba(40,40,38,0.98)">
             {item('m-compact', 'context', 'Compact conversation', async () => { void $.command.run({ command: 'compact' }); await closeMenu($) },
               ctxSeg ? <Text size="caption" color={tint(ctxSeg)} dimColor={!tint(ctxSeg)}>{ctxSeg.value}</Text> : null)}
-            {item('m-clear', null, 'Clear conversation', async () => { void $.command.run({ command: 'clear' }); await closeMenu($) })}
+            {item('m-clear', 'trash', 'Clear conversation', async () => { void $.command.run({ command: 'clear' }); await closeMenu($) })}
             {item('m-warm', 'cache', 'Keep cache warm', () => setKeepWarm($, !keep.isOn),
               <Text size="caption" weight="bold" color={keep.isOn ? 'warning' : undefined} dimColor={!keep.isOn}>{keep.isOn ? 'on' : 'off'}</Text>)}
-            {item('m-refresh', null, 'Refresh numbers', async () => { const fresh = build(await $.session.usage()); await update($, snap, () => fresh); await closeMenu($) })}
-            {item('m-hide', null, 'Collapse band', async () => { await closeMenu($); await toggle($) })}
+            {item('m-refresh', 'refresh', 'Refresh numbers', async () => { const fresh = build(await $.session.usage()); await update($, snap, () => fresh); await closeMenu($) })}
+            {item('m-hide', 'collapse', 'Collapse band', async () => { await closeMenu($); await toggle($) })}
           </Box>
         )
         : null

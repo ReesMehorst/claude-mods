@@ -22,7 +22,7 @@ const all = () => [
   gaugeSvg(92), gaugeSvg(0),
   splitSvg(toks), splitSvg({ in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }),
   dayTilesSvg(week), dayTilesSvg([{ label: '<&">', level: 1, isToday: false, percent: 1 }]),
-  ...(['context', 'cache', 'clock', 'calendar', 'coin', 'tokens'] as const).map((n) => iconSvg(n, '#a3a19a')),
+  ...(['context', 'cache', 'clock', 'calendar', 'coin', 'tokens', 'trash', 'refresh', 'collapse'] as const).map((n) => iconSvg(n, '#a3a19a')),
   miniMeterSvg(38, 'success', 71), miniMeterSvg(0, 'error'),
 ]
 

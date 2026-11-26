@@ -154,9 +154,15 @@ const ICON = {
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   coin: '<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15 9h-4.5a1.5 1.5 0 0 0 0 3h3a1.5 1.5 0 0 1 0 3H9"/>',
   tokens: '<path d="M4 6h16M4 12h16M4 18h11"/>',
+  // Dropdown actions, from the band buttons design.
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/>',
+  collapse: '<path d="M6 15l6-6 6 6"/>',
 } as const
 
-export const iconSvg = (name: 'context' | 'cache' | 'clock' | 'calendar' | 'coin' | 'tokens', color: string, size = 14) =>
+export type IconName = keyof typeof ICON
+
+export const iconSvg = (name: IconName, color: string, size = 14) =>
   doc(size, size, '0 0 24 24',
     `<g fill="none" stroke="${esc(color)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[name]}</g>`)
 
