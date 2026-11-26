@@ -1,4 +1,4 @@
-import type { Snapshot, Tokens, Trend } from '../types'
+import type { Cache, Snapshot, Tokens, Trend } from '../types'
 
 export type Mode = 'plan' | 'api' | 'usage'
 export type Level = 'success' | 'warning' | 'error'
@@ -18,6 +18,8 @@ const SHORT: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_
 
 export const emptyTokens: Tokens = { in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }
 export const emptyTrend: Trend = { lastCost: null, lastTurnUsd: null, ctxHistory: [] }
+
+export const emptyCache: Cache = { at: null, ttlMs: 300e3, active: false, pings: 0, alerted: [] }
 
 export const num = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${n}`
@@ -105,9 +107,61 @@ export const turnsLeft = (hist: number[], window: number) => {
   return avg > 0 ? Math.max(0, Math.ceil((0.8 * window - hist.at(-1)!) / avg)) : null
 }
 
+// --- Prompt cache warmth ---------------------------------------------------------------
+
+// Alert / keep-warm window before expiry: a minute on the 5-minute cache, five on the 1-hour one.
+export const leadMs = (ttlMs: number) => (ttlMs > 600e3 ? 300e3 : 60e3)
+
+// A write of both lifetimes counts as the shorter; a read-only turn keeps the lifetime already known.
+export const cacheTtl = (u: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } | undefined, prev: number) =>
+  (u?.ephemeral_5m_input_tokens ?? 0) > 0 ? 300e3 : (u?.ephemeral_1h_input_tokens ?? 0) > 0 ? 3600e3 : prev
+
+export const startTurn = (c: Cache, now: number): Cache => ({ ...c, at: now, active: true, pings: 0, alerted: [] })
+export const endTurn = (c: Cache, now: number, u?: Parameters<typeof cacheTtl>[0]): Cache => ({ ...c, at: now, ttlMs: cacheTtl(u, c.ttlMs), active: false, pings: 0, alerted: [] })
+
+// A keep-warm ping counts against the budget whether or not it answered; only an answer renews the cache.
+export const recordPing = (c: Cache, now: number, isAnswered: boolean): Cache =>
+  ({ ...c, at: isAnswered ? now : c.at, pings: c.pings + 1, alerted: isAnswered ? [] : c.alerted })
+
+// Milliseconds until the cache lapses (negative once it has); null before the first turn or while a turn runs.
+export const cacheLeft = (c: Cache, now: number) => (c.at == null || c.active ? null : c.at + c.ttlMs - now)
+
+export const fmtLeft = (ms: number) => (ms >= 3600e3 ? `${Math.floor(ms / 3600e3)}h ${Math.ceil((ms % 3600e3) / 60e3)}m` : ms >= 60e3 ? `${Math.ceil(ms / 60e3)}m` : `${Math.max(0, Math.ceil(ms / 1e3))}s`)
+
+export type KeepWarm = { isOn: boolean; maxPings: number }
+
+export const cacheSegment = (c: Cache, now: number, keep: KeepWarm = { isOn: false, maxPings: 0 }): Segment | null => {
+  if (c.at == null) return null
+  if (c.active) return { label: 'Cache', value: 'live', detail: 'turn in progress', short: 'cache live', percent: 0, level: 'success' }
+  const left = cacheLeft(c, now)!
+  const ttl = c.ttlMs >= 3600e3 ? '1h' : '5m'
+  const pings = keep.isOn ? `keep-warm ${c.pings}/${keep.maxPings}` : ''
+  if (left <= 0)
+    return { label: 'Cache', value: 'cold', detail: ['next message re-caches', pings].filter(Boolean).join(' · '), short: 'cache cold', percent: 100, level: 'warning' }
+  return {
+    label: 'Cache',
+    value: fmtLeft(left),
+    detail: [`warm · ${ttl} TTL`, pings].filter(Boolean).join(' · '),
+    short: `cache ${fmtLeft(left)}`,
+    percent: Math.round((1 - left / c.ttlMs) * 100),
+    level: left <= leadMs(c.ttlMs) ? 'warning' : 'success',
+  }
+}
+
+// Toasts for an idle cache. Small contexts are not worth a toast, and while a keep-warm ping is still due
+// the "going cold" notice waits: the ping prevents it. Each key toasts once per idle stretch.
+export const cacheAlerts = (c: Cache, now: number, ctxTokens: number | null, minTokens: number, willPing: boolean): Warning[] => {
+  const left = cacheLeft(c, now)
+  if (left == null || (ctxTokens ?? 0) < minTokens) return []
+  const size = ctxTokens == null ? '' : ` (~${num(ctxTokens)} tokens)`
+  if (left <= 0) return [{ key: 'cold', text: `Prompt cache went cold: your next message re-caches the whole context${size}` }]
+  if (left <= leadMs(c.ttlMs) && !willPing) return [{ key: 'soon', text: `Prompt cache goes cold in ${fmtLeft(left)}: send a message to keep it warm` }]
+  return []
+}
+
 const hours = (s: Snapshot, now: number) => (now - s.startedAt) / 3600e3
 
-export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, trend = emptyTrend): Segment[] => {
+export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, trend = emptyTrend, cache = emptyCache, keep?: KeepWarm): Segment[] => {
   const out: Segment[] = []
   const m = mode(s)
 
@@ -122,6 +176,9 @@ export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, tre
     percent: ctx,
     level: level(ctx ?? 0, 60, 80),
   })
+
+  const warm = cacheSegment(cache, now, keep)
+  if (warm) out.push(warm)
 
   for (const r of s.rateLimits) {
     const p = projected(r.percentUsed, r.resetsAt, r.kind, now)
