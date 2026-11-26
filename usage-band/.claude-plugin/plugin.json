@@ -1,8 +1,8 @@
 {
   "name": "usage-band",
   "author": { "name": "ReesMehorst" },
-  "version": "0.4.0",
-  "description": "Band above the prompt: context, plan limits with pace and ETA, or API spend vs budget, plus token breakdown and warnings.",
+  "version": "0.5.0",
+  "description": "Band above the prompt: context, plan limits with pace and ETA, or API spend vs budget, prompt-cache warmth with cold alerts and optional keep-warm, plus token breakdown and warnings.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "budgetUsd": {
@@ -16,6 +16,24 @@
       "title": "Expensive turn warning (USD)",
       "description": "API-credit sessions only: toast when a single turn costs at least this much. 0 turns it off.",
       "default": 0
+    },
+    "keepWarm": {
+      "type": "boolean",
+      "title": "Keep prompt cache warm",
+      "description": "Ping the cache shortly before it lapses while you are idle, so the next message reads it instead of re-caching the whole context. Each ping is a cheap cache read, billed to the session. Also toggled with /keep-warm.",
+      "default": false
+    },
+    "keepWarmMaxPings": {
+      "type": "number",
+      "title": "Keep-warm pings per idle stretch",
+      "description": "Most pings sent between two of your messages; resets when you send one. 0 means never ping (alerts only).",
+      "default": 3
+    },
+    "coldMinTokens": {
+      "type": "number",
+      "title": "Cache alert minimum (tokens)",
+      "description": "No cold alerts or keep-warm pings while the context is smaller than this; a small context is cheap to re-cache.",
+      "default": 20000
     }
   }
 }

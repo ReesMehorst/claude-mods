@@ -24,6 +24,16 @@ A band above the prompt that shows where your session stands.
 - **API mode** (API credits): spend leads, with `$/hr`. Set a budget under
   `/config` → *API budget (USD)* for a budget bar and ETA.
 - **Context** fill, and a **token** breakdown (in / out / cache hit %).
+- **Prompt cache**: a countdown to when the cache your chat is riding on lapses (5 min, or
+  1 h when the cache was written that way), then `cold`. A toast warns a minute before
+  (five on the 1 h cache) and another when it goes cold, since the next message then re-caches
+  the whole context. No alerts while the context is under 20k tokens (`Cache alert minimum`).
+- **Keep warm** (opt in): `/keep-warm on` (or *Keep prompt cache warm* under `/config`) sends a
+  tiny tool-less ping over your transcript shortly before the cache lapses, which renews it.
+  A ping is a cache read of your context plus one word out, billed to the session and counted in
+  `/cost`; it is cheaper than re-caching, but not free. At most 3 per idle stretch
+  (*Keep-warm pings per idle stretch*), reset by your next message; after that you get the usual
+  alert. Pings never fire mid-turn or once the cache is already cold.
 - **Warnings** as toasts: context ≥ 80%, a limit on pace past 100%, spend ≥ 90% of budget.
 - `/usage-band` toggles a compact one-line view (remembered across sessions).
 

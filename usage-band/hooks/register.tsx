@@ -2,13 +2,19 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import type { Snapshot } from '../types'
-import { addUsage, bar, barSvg, compactLine, emptyTokens, emptyTrend, mode, recordTurn, segments, warnings } from './summarize'
+import { addUsage, bar, barSvg, cacheAlerts, cacheLeft, compactLine, emptyCache, emptyTokens, emptyTrend, endTurn, leadMs, mode, recordPing, recordTurn, segments, startTurn, warnings } from './summarize'
 
 const snap = atom({ plugin: 'usage-band', key: 'snap' } as const, null)
 const tokens = atom({ plugin: 'usage-band', key: 'tokens' } as const, emptyTokens)
 const trend = atom({ plugin: 'usage-band', key: 'trend' } as const, emptyTrend)
 const warned = atom({ plugin: 'usage-band', key: 'warned' } as const, [] as string[])
 const compact = atom({ plugin: 'usage-band', key: 'compact' } as const, false)
+const cache = atom({ plugin: 'usage-band', key: 'cache' } as const, emptyCache)
+const keepWarm = atom({ plugin: 'usage-band', key: 'keepWarm' } as const, false)
+const pulse = atom({ plugin: 'usage-band', key: 'pulse' } as const, 0) // bumped by the tick so the countdown redraws
+
+// A fork re-reads the cached transcript, which renews its lifetime; no tools, no thinking, one word back.
+const PING = 'Cache keep-alive ping. You have no tools here. Reply with the single word "ok" straight away, without thinking it over.'
 
 const build = (u: SessionUsage): Snapshot => ({
   contextPercent: u.context.percent ?? null,
@@ -26,15 +32,53 @@ async function toggle($: EngineInterface) {
   return isCompact
 }
 
+async function setKeepWarm($: EngineInterface, isOn: boolean) {
+  await $.store.set('keepWarm', isOn)
+  await update($, keepWarm, () => isOn)
+  return isOn
+}
+
+let isPinging = false // a keep-warm fork is out; its own events must not count as a turn
+
+type CacheOptions = { maxPings: number; minTokens: number }
+
+// Every 5 s: redraw the countdown, send a keep-warm ping when one is due, else toast the cold warnings.
+async function tick($: EngineInterface, { maxPings, minTokens }: CacheOptions) {
+  const now = await $.clock.now()
+  const c = await read($, cache)
+  const left = cacheLeft(c, now)
+  if (left == null) return
+  await update($, pulse, n => n + 1)
+  const ctx = (await read($, snap))?.contextTokens ?? null
+  const willPing = (await read($, keepWarm)) && c.pings < maxPings && (ctx ?? 0) >= minTokens
+  if (willPing && !isPinging && left > 0 && left <= leadMs(c.ttlMs)) {
+    isPinging = true
+    let isAnswered = false
+    try { isAnswered = (await $.model.fork({ prompt: PING })).isAnswered } catch { /* counts as a failed ping */ }
+    const at = await $.clock.now()
+    await update($, cache, x => recordPing(x, at, isAnswered))
+    isPinging = false
+    return
+  }
+  const fresh = cacheAlerts(c, now, ctx, minTokens, willPing).filter(a => !c.alerted.includes(a.key))
+  for (const a of fresh) $.ui.toast(`🧊 ${a.text}`, { timeoutMs: 10000 })
+  if (fresh.length) await update($, cache, x => ({ ...x, alerted: [...x.alerted, ...fresh.map(a => a.key)] }))
+}
+
 export const register: Register = (on, options) => {
   const budget = Number(options.budgetUsd ?? 0)
   const turnWarn = Number(options.turnWarnUsd ?? 0)
-
+  const maxPings = Math.max(0, Math.floor(Number(options.keepWarmMaxPings ?? 3)))
+  const minTokens = Math.max(0, Number(options.coldMinTokens ?? 20000))
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'usage-band', description: 'Toggle the usage band between full and compact' })
+    await $.command.register({ name: 'keep-warm', description: 'Keep the prompt cache warm while idle: on, off, or no argument to toggle', argumentHint: '[on|off]' })
     const isCompact = (await $.store.get('compact')) === true
     await update($, compact, () => isCompact)
+    const stored = await $.store.get('keepWarm')
+    await update($, keepWarm, () => (typeof stored === 'boolean' ? stored : options.keepWarm === true))
+    $.clock.every(5000, () => tick($, { maxPings, minTokens }))
     const s = build(await $.session.usage())
     await update($, snap, () => s)
     return r
@@ -50,8 +94,20 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  on('turn.start', async ($, e, next) => {
+    if (!e.agentId && !isPinging) {
+      const at = await $.clock.now()
+      await update($, cache, c => startTurn(c, at))
+    }
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
+    if (!e.agentId && !isPinging) {
+      const at = await $.clock.now()
+      await update($, cache, c => endTurn(c, at, e.usage))
+    }
     const u = e.usage
     if (u) await update($, tokens, t => addUsage(t, u))
     if (e.agentId) return r // ponytail: subagent turns would skew context growth
@@ -64,11 +120,19 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'usage-band' }, async $ => ({ text: `Usage band: ${(await toggle($)) ? 'compact' : 'full'}` }))
 
+  on('command.run', { command: 'keep-warm' }, async ($, e) => {
+    const arg = String(e.args ?? '').trim().toLowerCase()
+    const isOn = await setKeepWarm($, arg === 'on' ? true : arg === 'off' ? false : !(await read($, keepWarm)))
+    return { text: isOn ? `Keep-warm on: pings the cache up to ${maxPings}× while idle (billed as cache reads)` : 'Keep-warm off: you will get an alert when the cache goes cold' }
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const s = await read($, snap)
     if (s === null || e.props.hasSurvey) return next(e)
     const m = mode(s)
-    const segs = segments(s, await read($, tokens), await $.clock.now(), budget, await read($, trend))
+    await read($, pulse) // subscribe: the tick redraws the cache countdown
+    const keep = { isOn: await read($, keepWarm), maxPings }
+    const segs = segments(s, await read($, tokens), await $.clock.now(), budget, await read($, trend), await read($, cache), keep)
 
     // Graphical surfaces (desktop, vscode, mobile): meters + buttons. Terminal keeps the text band below.
     if (e.surface !== 'terminal') {
@@ -86,6 +150,7 @@ export const register: Register = (on, options) => {
           {/* void: command.run is queued until the session is idle */}
           <Button key="clear" variant="secondary" onPress={() => void $.command.run({ command: 'clear' })}>/clear</Button>
           <Button key="compact" variant="secondary" onPress={() => void $.command.run({ command: 'compact' })}>/compact</Button>
+          <Button key="warm" variant="secondary" onPress={() => setKeepWarm($, !keep.isOn)}>{keep.isOn ? 'Keep warm: on' : 'Keep warm: off'}</Button>
           <Button key="refresh" variant="secondary" onPress={async () => { const fresh = build(await $.session.usage()); await update($, snap, () => fresh) }}>Refresh</Button>
           {toggleBtn}
         </Box>

@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { addUsage, bar, barSvg, cacheHit, compactLine, emptyTokens, emptyTrend, eta, mode, projected, recordTurn, segments, turnsLeft, warnings } from './summarize'
+import { addUsage, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, compactLine, emptyCache, emptyTokens, emptyTrend, endTurn, eta, fmtLeft, mode, projected, recordPing, recordTurn, segments, startTurn, turnsLeft, warnings } from './summarize'
 import type { Segment } from './summarize'
 
 const now = Date.parse('2026-10-18T12:00:00Z')
@@ -96,4 +96,62 @@ test('trend shows in segments and ctx-soon warns near 80%', () => {
   expect(cost.detail).toBe('included in plan · last +$0.42')
   expect(warnings(plan, now, 0, trend).map(w => w.key)).toContain('ctx-soon:130000')
   expect(warnings(plan, now, 0, { ...trend, ctxHistory: [10000, 11000, 12000] }).map(w => w.key)).not.toContain('ctx-soon:10000')
+})
+
+// --- prompt cache warmth ---
+
+const warm = endTurn(emptyCache, now)
+
+test('cache lifetime: both writes count as the shorter, a read-only turn keeps what was known', () => {
+  expect(cacheTtl({ ephemeral_1h_input_tokens: 10, ephemeral_5m_input_tokens: 0 }, 300e3)).toBe(3600e3)
+  expect(cacheTtl({ ephemeral_1h_input_tokens: 10, ephemeral_5m_input_tokens: 5 }, 3600e3)).toBe(300e3)
+  expect(cacheTtl(undefined, 3600e3)).toBe(3600e3)
+})
+
+test('cacheLeft is null before a turn and while one runs', () => {
+  expect(cacheLeft(emptyCache, now)).toBe(null)
+  expect(cacheLeft(startTurn(warm, now), now)).toBe(null)
+  expect(cacheLeft(warm, now + 60e3)).toBe(240e3)
+  expect(cacheLeft(warm, now + 400e3)).toBe(-100e3)
+})
+
+test('fmtLeft', () => {
+  expect(fmtLeft(240e3)).toBe('4m')
+  expect(fmtLeft(299e3)).toBe('5m')
+  expect(fmtLeft(45e3)).toBe('45s')
+  expect(fmtLeft(-5e3)).toBe('0s')
+  expect(fmtLeft(3600e3 + 30 * 60e3)).toBe('1h 30m')
+})
+
+test('cache segment: warm, running out, cold, live', () => {
+  const keep = { isOn: true, maxPings: 3 }
+  expect(cacheSegment(emptyCache, now)).toBe(null)
+  const s1 = cacheSegment(warm, now + 60e3, keep)!
+  expect(s1).toMatchObject({ value: '4m', level: 'success', percent: 20 })
+  expect(s1.detail).toBe('warm · 5m TTL · keep-warm 0/3')
+  expect(cacheSegment(warm, now + 250e3)).toMatchObject({ value: '50s', level: 'warning' })
+  expect(cacheSegment(warm, now + 301e3)).toMatchObject({ value: 'cold', level: 'warning', percent: 100 })
+  expect(cacheSegment(startTurn(warm, now), now)).toMatchObject({ value: 'live', level: 'success' })
+})
+
+test('cache segment sits right after context in the band', () => {
+  expect(segments(plan, toks, now, 0, emptyTrend, warm).map(x => x.label).slice(0, 3)).toEqual(['Context', 'Cache', '5h limit'])
+  expect(segments(plan, toks, now).map(x => x.label)).not.toContain('Cache')
+})
+
+test('cache alerts: soon, cold, quiet for small contexts, held back while a ping is due', () => {
+  expect(cacheAlerts(warm, now + 100e3, 60000, 20000, false)).toEqual([])
+  expect(cacheAlerts(warm, now + 250e3, 60000, 20000, false)[0]!.key).toBe('soon')
+  expect(cacheAlerts(warm, now + 250e3, 60000, 20000, true)).toEqual([])
+  expect(cacheAlerts(warm, now + 310e3, 60000, 20000, true)[0]!.key).toBe('cold')
+  expect(cacheAlerts(warm, now + 310e3, 5000, 20000, false)).toEqual([])
+  expect(cacheAlerts(emptyCache, now, 60000, 20000, false)).toEqual([])
+})
+
+test('a ping renews the cache only when answered, and always uses up a try', () => {
+  const ok = recordPing(warm, now + 250e3, true)
+  expect(ok).toMatchObject({ at: now + 250e3, pings: 1 })
+  const bad = recordPing(warm, now + 250e3, false)
+  expect(bad).toMatchObject({ at: now, pings: 1 })
+  expect(endTurn(ok, now + 600e3).pings).toBe(0)
 })
