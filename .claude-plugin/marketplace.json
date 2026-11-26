@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "usage-band",
-      "description": "Band above the prompt: context, plan limits with pace and ETA, or API spend vs budget, plus token breakdown and warnings.",
+      "description": "Band above the prompt with an animated mascot that suggests the next step: context ring, prompt-cache thermometer with cold alerts and optional keep-warm, plan limits with pace bars and weekly day tiles, or API spend gauge vs budget, plus token split and warnings.",
       "source": "./usage-band",
       "category": "productivity"
     },

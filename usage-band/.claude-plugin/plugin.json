@@ -1,8 +1,8 @@
 {
   "name": "usage-band",
   "author": { "name": "ReesMehorst" },
-  "version": "0.5.0",
-  "description": "Band above the prompt: context, plan limits with pace and ETA, or API spend vs budget, prompt-cache warmth with cold alerts and optional keep-warm, plus token breakdown and warnings.",
+  "version": "0.6.0",
+  "description": "Band above the prompt with an animated mascot that suggests the next step: context ring, prompt-cache thermometer with cold alerts and optional keep-warm, plan limits with pace bars and weekly day tiles, or API spend gauge vs budget, plus token split and warnings.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "budgetUsd": {
