@@ -19,59 +19,60 @@ Answer `y` to add the marketplace, then pick a scope.
 A band above the prompt that shows where your session stands, with a small orange mascot
 that tells you the one thing worth doing next.
 
-**The mascot (0.6.0)**: on desktop, VS Code and mobile the band opens with an animated mascot
-whose mood follows the most urgent segment: toasty (cache warm), busy (a turn is running),
-shivering (cache about to lapse), stoking the fire (keep-warm is on), frozen (cache cold),
-stuffed (context filling up), sweating over money (API budget nearly spent) or racing the clock
-(a plan limit on pace past 100%). Its speech bubble offers one action when there is one:
-*Compact now* when the context is filling up, *Keep it warm* (or *Turn on keep-warm* once the
-cache is cold). *Later* hides that action until the situation changes. Every other action sits
-behind the **⋯** button: Compact, Clear, Keep warm on/off, Refresh and Hide.
+<img width="768" alt="The usage band: the mascot sprinting above the card, saying the 5h limit is hit ~19:00 at this pace; segments for context, cache, 5h limit, weekly, API value and tokens" src="usage-band/assets/band.png" />
 
-Each segment has its own picture:
+**The mascot** (desktop, VS Code, mobile) stands on the band's edge. Its mood follows the most
+urgent thing, and its bubble offers the one action that fits, with *Later* to hide it:
 
-- **Context**: a ring with the fill, the tokens used of the window, and turns left to 80%.
-- **Prompt cache**: a thermometer that drains as the cache lifetime runs out (pulsing while a
-  turn runs, icy once cold), with the countdown.
-- **5-hour and weekly limits** (plan only): a pace bar with what is used, a hatched forecast of
-  where the window lands at this pace, and a tick for how far into the window you are. The weekly
-  limit also gets seven **day tiles** in GitHub greens, one per day of the window, shaded by how
-  much of the limit that day used. The tiles are built from samples the mod takes at the end of
-  each turn while it runs (kept across sessions), so days without Claude Code open stay blank.
-- **Money**: on a plan, the session's "API value" as muted text (it is included in the plan).
-  On API credits, a fuel gauge against your budget when one is set, otherwise spend with `$/hr`.
-- **Tokens**: a split bar of cache reads, new input and output.
+| <img src="usage-band/assets/moods/warm.svg" width="72" alt="Mascot in sunglasses with a hot drink" /> | <img src="usage-band/assets/moods/live.svg" width="72" alt="Mascot bouncing, arms up" /> | <img src="usage-band/assets/moods/soon.svg" width="72" alt="Mascot shivering in a scarf" /> | <img src="usage-band/assets/moods/keep.svg" width="72" alt="Mascot at a campfire" /> | <img src="usage-band/assets/moods/cold.svg" width="72" alt="Mascot frozen in ice" /> | <img src="usage-band/assets/moods/full.svg" width="72" alt="Mascot under a stack of papers" /> | <img src="usage-band/assets/moods/pace.svg" width="72" alt="Mascot sprinting" /> | <img src="usage-band/assets/moods/budget.svg" width="72" alt="Mascot flipping its last coin" /> |
+|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Cache warm | Turn running | Cache running out<br>*Keep it warm* | Keep-warm on | Cache cold<br>*Turn on keep-warm* | Context filling<br>*Compact now* | Limit on pace past 100% | Budget nearly spent |
 
-**Hide** (or `/usage-band`) collapses the band to chips: a napping mascot and one chip per
-segment with an icon, the value and a mini meter (plan: context, cache, 5h, week, API value;
-API: context, cache, spend, tokens). *Show* brings the full band back; the choice is remembered.
+**Segments**, one row, each with a picture and at most one short line:
 
-**Plan vs API**: the band shows "Plan usage" once your subscription reports rate limits, "API
-usage" once something is billed without them, and plain "Usage" before either. A plan never
-talks budget and API never talks pace. On API credits the keep-warm suggestion says the pings are
-billed.
+- **Context**: a ring; *~N turns left* (to 80%) or *Time to compact*.
+- **Cache**: a thermometer that drains as the prompt cache's lifetime runs out; *Keeping warm*,
+  *Running out* or *Expired*.
+- **5h limit** (plan): a bar with what is used, a hatched forecast of where the window lands at
+  this pace and a tick for now; *Runs out ~HH:mm* or *Resets HH:mm*.
+- **Weekly** (plan): seven day tiles in GitHub greens, brighter for a heavier day, today ringed.
+  The tiles come from samples taken at the end of each turn while the mod runs (kept across
+  sessions), so days without Claude Code open stay blank.
+- **API value** (plan): what the session would cost on API credits; *Runs out ~HH:mm* for the
+  first limit you are on pace to hit.
+- **Spend** (API credits with a budget): a fuel gauge, green to 75%, amber to 90%, red after;
+  *Runs out ~HH:mm* or *Over budget*. Without a budget, spend with `$/hr`.
+- **Tokens**: a split bar of cache reads, new input and output; *xx% cache read*.
 
-The terminal keeps the text band:
+The **⋯** button opens the band's actions:
 
-- **Plan mode** (Pro/Max subscription): 5-hour and weekly limits with pace projection
-  (`pace → 120%`) and when you'll hit 100% at that pace (`hits 100% ~16:40`).
-  Session cost is shown muted as "API value".
-- **API mode** (API credits): spend leads, with `$/hr`. Set a budget under
-  `/config` → *API budget (USD)* for a budget bar and ETA.
-- **Context** fill, and a **token** breakdown (in / out / cache hit %).
-- **Prompt cache**: a countdown to when the cache your chat is riding on lapses (5 min, or
-  1 h when the cache was written that way), then `cold`. A toast warns a minute before
-  (five on the 1 h cache) and another when it goes cold, since the next message then re-caches
-  the whole context. No alerts while the context is under 20k tokens (`Cache alert minimum`).
-- **Keep warm** (opt in): `/keep-warm on` (or *Keep prompt cache warm* under `/config`) sends a
-  tiny tool-less ping over your transcript shortly before the cache lapses, which renews it.
-  A ping is a cache read of your context plus one word out, billed to the session and counted in
-  `/cost`; it is cheaper than re-caching, but not free. At most 3 per idle stretch
-  (*Keep-warm pings per idle stretch*), reset by your next message; after that you get the usual
-  alert. Pings never fire mid-turn or once the cache is already cold.
-- **Warnings** as toasts on every surface: context ≥ 80%, a limit on pace past 100%, spend ≥ 90% of budget.
-- `/usage-band` toggles a compact one-line view (remembered across sessions).
-<img width="782" height="256" alt="image" src="https://github.com/user-attachments/assets/11e24f74-ddf0-4bcb-afa6-664acc065c97" />
+<img width="768" alt="The ⋯ dropdown: Compact conversation (42%), Clear conversation, Keep cache warm (on), Refresh numbers, Collapse band" src="usage-band/assets/dropdown.png" />
+
+**Collapse band** (or `/usage-band`) folds it to one line of chips, the mascot still in its
+mood; *Show* brings the band back, and the choice is remembered:
+
+<img width="768" alt="The compact band: the mascot, then chips for context 37%, cache 60m, 5h 50%, week 50% and API value $16.83" src="usage-band/assets/compact.png" />
+
+**Plan vs API**: the band says "Plan usage" once your subscription reports rate limits, "API
+usage" once something is billed without them, and "Usage" before either. A plan never talks
+budget and API never talks pace; on API credits the keep-warm suggestion says the pings are billed.
+
+**Prompt cache and keep-warm**: the cache your chat rides on lapses after 5 minutes, or 1 hour
+when it was written that way; the next message then re-caches the whole context. A toast warns
+before it lapses and when it has (not while the context is under 20k tokens,
+*Cache alert minimum*). `/keep-warm on`, the dropdown or *Keep prompt cache warm* under `/config`
+sends a tiny tool-less ping shortly before the lapse, which renews it. A ping is a cache read of
+your context plus one word out, billed to the session and counted in `/cost`: cheaper than
+re-caching, not free. At most 3 per idle stretch (*Keep-warm pings per idle stretch*), reset by
+your next message. Pings never fire mid-turn or once the cache is already cold.
+
+**Warnings** as toasts on every surface: context at 80%, a limit on pace past 100%, spend at 90%
+of budget. On API credits, *API budget (USD)* and *Expensive turn warning (USD)* under `/config`
+set the budget and a per-turn cost toast.
+
+**Terminal**: the same data as a text band, with `━━━───` bars: limits with `pace → 120%` and
+`hits 100% ~16:40`, spend with `$/hr`, context, tokens and the cache countdown. `/usage-band`
+toggles a one-line view there too.
 
 ### github-pane
 
