@@ -17,8 +17,21 @@ export type Tokens = { in: number; out: number; cacheRead: number; cacheWrite: n
 // pings sent since the last real turn; alerted: alert keys already toasted this idle stretch.
 export type Cache = { at: number | null; ttlMs: number; active: boolean; pings: number; alerted: string[] }
 
+// The mascot's poses, one per situation the band can be in.
+export type Mood = 'warm' | 'live' | 'soon' | 'keep' | 'cold' | 'full' | 'budget' | 'pace' | 'nap'
+
+// What the mascot's bubble says, and the one action it offers (hidden once dismissed by key).
+export type Suggestion = { key: string; mood: Mood; text: string; action?: 'compact' | 'keep' }
+
+// Weekly limit sampled per local day: date (YYYY-MM-DD) → percentUsed at that day's last sample.
+// resetsAt ties the log to one weekly window; a new window starts a new log.
+export type DayLog = { resetsAt: string; days: Record<string, number> }
+
+// One tile of the weekly strip. level: -1 still to come, 0 no use, 1–4 light to heavy.
+export type DayTile = { label: string; level: -1 | 0 | 1 | 2 | 3 | 4; isToday: boolean; percent: number | null }
+
 declare module 'claude-code' {
   interface PluginState {
-    'usage-band': { snap: Snapshot | null; tokens: Tokens; trend: Trend; warned: string[]; compact: boolean; cache: Cache; keepWarm: boolean; pulse: number }
+    'usage-band': { snap: Snapshot | null; tokens: Tokens; trend: Trend; warned: string[]; compact: boolean; cache: Cache; keepWarm: boolean; pulse: number; menuOpen: boolean; dismissed: string; weekLog: DayLog | null }
   }
 }

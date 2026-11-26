@@ -1,4 +1,4 @@
-import type { Cache, Snapshot, Tokens, Trend } from '../types'
+import type { Cache, DayLog, DayTile, Snapshot, Suggestion, Tokens, Trend } from '../types'
 
 export type Mode = 'plan' | 'api' | 'usage'
 export type Level = 'success' | 'warning' | 'error'
@@ -53,7 +53,7 @@ export const barSvg = (percent: number, level: Level, width = 120, height = 6) =
     `</svg>`
 }
 
-const elapsedFraction = (resetsAt: string | undefined, kind: string, now: number) => {
+export const elapsedFraction = (resetsAt: string | undefined, kind: string, now: number) => {
   const dur = WINDOW_MS[kind]
   if (!dur || !resetsAt) return null
   const f = (dur - (Date.parse(resetsAt) - now)) / dur
@@ -161,6 +161,19 @@ export const cacheAlerts = (c: Cache, now: number, ctxTokens: number | null, min
 
 const hours = (s: Snapshot, now: number) => (now - s.startedAt) / 3600e3
 
+// Session spend per hour; null for the first few minutes, when it is noise.
+const spendRate = (s: Snapshot, now: number) => {
+  const h = hours(s, now)
+  return h > 0.05 && s.costUsd != null ? s.costUsd / h : null
+}
+
+// When the budget runs out at the current spend rate; null without a rate or once it has.
+const budgetEta = (s: Snapshot, now: number, budgetUsd: number) => {
+  const rate = spendRate(s, now)
+  const rest = budgetUsd - (s.costUsd ?? 0)
+  return rate && rest > 0 ? now + (rest / rate) * 3600e3 : null
+}
+
 export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, trend = emptyTrend, cache = emptyCache, keep?: KeepWarm): Segment[] => {
   const out: Segment[] = []
   const m = mode(s)
@@ -196,8 +209,7 @@ export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, tre
   }
 
   if (s.costUsd != null) {
-    const h = hours(s, now)
-    const rate = h > 0.05 ? s.costUsd / h : null
+    const rate = spendRate(s, now)
     const usd = `$${s.costUsd.toFixed(2)}`
     const turn = trend.lastTurnUsd ? `last +$${trend.lastTurnUsd.toFixed(2)}` : ''
     if (m === 'plan') {
@@ -205,7 +217,7 @@ export const segments = (s: Snapshot, t: Tokens, now: number, budgetUsd = 0, tre
     } else if (budgetUsd > 0) {
       const pct = Math.round((s.costUsd / budgetUsd) * 100)
       const rest = budgetUsd - s.costUsd
-      const etaMs = rate && rest > 0 ? now + (rest / rate) * 3600e3 : null
+      const etaMs = budgetEta(s, now, budgetUsd)
       out.push({
         label: 'Spend',
         value: usd,
@@ -259,4 +271,145 @@ export const warnings = (s: Snapshot, now: number, budgetUsd = 0, trend = emptyT
   if (mode(s) === 'api' && budgetUsd > 0 && (s.costUsd ?? 0) >= budgetUsd * 0.9)
     out.push({ key: `budget:${budgetUsd}`, text: `Spend $${s.costUsd!.toFixed(2)} of $${budgetUsd} budget` })
   return out
+}
+
+// --- Mascot suggestion -------------------------------------------------------------------
+
+export type SuggestInput = { s: Snapshot; now: number; cache: Cache; keepWarm: boolean; trend: Trend; budgetUsd: number; dismissed: string }
+
+const turns = (n: number) => `~${n} turn${n === 1 ? '' : 's'}`
+
+// The single most urgent thing, first match wins. Which checks apply depends on the mode:
+// a plan never talks budget, API never talks pace, usage only talks context and cache.
+const pick = ({ s, now, cache, keepWarm, trend, budgetUsd }: SuggestInput): Suggestion => {
+  const m = mode(s)
+
+  if (m === 'api' && budgetUsd > 0 && (s.costUsd ?? 0) >= budgetUsd * 0.9) {
+    const at = budgetEta(s, now, budgetUsd)
+    return { key: `budget:${budgetUsd}`, mood: 'budget', text: `$${(s.costUsd ?? 0).toFixed(2)} of your $${budgetUsd} budget is spent.${at != null ? ` Runs out ~${clock(at, now)}.` : ''}` }
+  }
+
+  if (m === 'plan')
+    for (const r of s.rateLimits) {
+      const p = projected(r.percentUsed, r.resetsAt, r.kind, now)
+      if (Math.max(r.percentUsed, p ?? 0) < 100) continue
+      const label = LABEL[r.kind] ?? r.kind
+      const hit = eta(r.percentUsed, r.resetsAt, r.kind, now)
+      const text = r.percentUsed >= 100 ? `${label} reached.`
+        : hit != null ? `At this pace the ${label} is hit ~${clock(hit, now)}.`
+        : `At this pace the ${label} lands at ${p}%.`
+      return { key: `pace:${r.kind}:${r.resetsAt ?? ''}`, mood: 'pace', text }
+    }
+
+  const ctx = s.contextPercent
+  const tl = turnsLeft(trend.ctxHistory, s.contextWindow)
+  if ((ctx ?? 0) >= 60 || (tl != null && tl <= 3)) {
+    const text = ctx == null ? `Context is ${turns(tl!)} from 80%.`
+      : `Context is at ${ctx}%${tl != null ? ` and ${turns(tl)} from 80%` : ''}.`
+    return { key: `ctx:${trend.ctxHistory[0] ?? ''}`, mood: 'full', text, action: 'compact' }
+  }
+
+  const left = cacheLeft(cache, now)
+  if (left != null && left <= 0) {
+    const text = `Frozen solid. Your next message re-caches${s.contextTokens == null ? ' the context' : ` ~${num(s.contextTokens)} tokens`}.`
+    return keepWarm ? { key: 'cold', mood: 'cold', text } : { key: 'cold', mood: 'cold', text: `${text} Keep it warm next time?`, action: 'keep' }
+  }
+  if (left != null && left <= leadMs(cache.ttlMs))
+    return keepWarm
+      ? { key: 'keep', mood: 'keep', text: 'Stoking the fire: a keep-warm ping goes out before the cache lapses.' }
+      : { key: 'soon', mood: 'soon', text: `Brr… ${fmtLeft(left)} until the cache goes cold.`, action: 'keep' }
+  if (cache.active) return { key: 'live', mood: 'live', text: 'On it! The cache refreshes while Claude works.' }
+  const base = left == null ? 'Ready when you are.' : `Toasty. The cache stays warm for ${fmtLeft(left)}.`
+  return { key: 'warm', mood: 'warm', text: keepWarm ? `${base} Keep-warm is on.` : base }
+}
+
+// A dismissed suggestion keeps talking but stops offering its action.
+export const suggest = (i: SuggestInput): Suggestion => {
+  const g = pick(i)
+  const text = g.action === 'keep' && mode(i.s) === 'api' ? `${g.text} (pings bill as cache reads)` : g.text
+  return i.dismissed === g.key ? { key: g.key, mood: g.mood, text } : { ...g, text }
+}
+
+// --- Weekly day log ----------------------------------------------------------------------
+
+export const dayKey = (ms: number) => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Latest sample of the day wins; a new weekly window starts a fresh log. Keeps the last 8 days.
+export const recordDay = (log: DayLog | null, now: number, percentUsed: number, resetsAt: string): DayLog => {
+  const days = { ...(log?.resetsAt === resetsAt ? log.days : {}), [dayKey(now)]: percentUsed }
+  return { resetsAt, days: Object.fromEntries(Object.entries(days).sort(([a], [b]) => (a < b ? -1 : 1)).slice(-8)) }
+}
+
+const dayLevel = (use: number): DayTile['level'] => (use <= 0 ? 0 : use <= 5 ? 1 : use <= 10 ? 2 : use <= 15 ? 3 : 4)
+
+// Seven tiles over [resetsAt − 7 days, resetsAt): each day's share of the weekly limit, as the
+// growth since the last earlier sample. A log from another window counts as empty.
+export const dayLevels = (log: DayLog | null, now: number, resetsAt: string): DayTile[] => {
+  const days = log?.resetsAt === resetsAt ? log.days : {}
+  const keys = Object.keys(days).sort()
+  const today = dayKey(now)
+  const start = Date.parse(resetsAt) - 7 * 86400e3
+  return Array.from({ length: 7 }, (_, i): DayTile => {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i) // calendar days, so a DST change does not shift a tile
+    const key = dayKey(d.getTime())
+    const label = d.toLocaleDateString('en-US', { weekday: 'short' })
+    const isToday = key === today
+    if (key > today) return { label, level: -1, isToday, percent: null }
+    const sample = days[key]
+    if (sample == null) return { label, level: 0, isToday, percent: null }
+    const prev = keys.filter(k => k < key).at(-1)
+    const use = Math.max(0, sample - (prev == null ? 0 : days[prev]!))
+    return { label, level: dayLevel(use), isToday, percent: use }
+  })
+}
+
+// --- Plain words for the graphical band ---------------------------------------------------
+
+export type ExplainInput = { s: Snapshot; t: Tokens; now: number; cache: Cache; keepWarm: boolean; trend: Trend; budgetUsd: number }
+
+// The one thing worth knowing about a segment, in a few words, or nothing when the picture
+// and value already say it all. The terminal keeps the longer `detail`.
+export const explain = (seg: Segment, x: ExplainInput): string[] => {
+  const { s, now, cache: c } = x
+  const r = s.rateLimits.find(l => (LABEL[l.kind] ?? l.kind) === seg.label)
+  if (r) {
+    if (r.percentUsed >= 100) return ['Limit reached']
+    const hit = eta(r.percentUsed, r.resetsAt, r.kind, now)
+    if (hit != null) return [`Runs out ~${clock(hit, now)}`]
+    return r.resetsAt ? [`Resets ${clock(Date.parse(r.resetsAt), now)}`] : []
+  }
+  switch (seg.label) {
+    case 'Context': {
+      const left = turnsLeft(x.trend.ctxHistory, s.contextWindow)
+      return left == null ? [] : left === 0 ? ['Time to compact'] : [`~${left} turn${left === 1 ? '' : 's'} left`]
+    }
+    case 'Cache': {
+      const left = cacheLeft(c, now)
+      if (left != null && left <= 0) return ['Expired']
+      if (x.keepWarm) return ['Keeping warm']
+      if (!c.active && left != null && left <= leadMs(c.ttlMs)) return ['Running out']
+      return []
+    }
+    case 'API value': {
+      // The first plan limit this pace runs out, if any does before it resets.
+      const hits = s.rateLimits.map(l => eta(l.percentUsed, l.resetsAt, l.kind, now)).filter((h): h is number => h != null)
+      return hits.length ? [`Runs out ~${clock(Math.min(...hits), now)}`] : []
+    }
+    case 'Tokens': {
+      const hit = cacheHit(x.t)
+      return hit == null ? [] : [`${hit}% cache read`]
+    }
+    case 'Spend': {
+      if (x.budgetUsd <= 0) return []
+      if ((s.costUsd ?? 0) >= x.budgetUsd) return ['Over budget']
+      const at = budgetEta(s, now, x.budgetUsd)
+      return at ? [`Runs out ~${clock(at, now)}`] : []
+    }
+    default:
+      return []
+  }
 }

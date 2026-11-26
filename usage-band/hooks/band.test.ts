@@ -10,43 +10,167 @@ const USAGE = {
   rateLimits: [{ kind: 'five_hour', percentUsed: 60, resetsAt: '2026-10-18T14:30:00Z' }],
   cost: { usd: 2 },
 } as unknown as SessionUsage
+// A calm plan: limits well under pace, context at 30%, and a weekly window.
+const CALM = {
+  ...USAGE,
+  rateLimits: [
+    { kind: 'five_hour', percentUsed: 10, resetsAt: '2026-10-18T14:30:00Z' },
+    { kind: 'seven_day', percentUsed: 20, resetsAt: '2026-10-22T00:00:00Z' },
+  ],
+} as unknown as SessionUsage
+const FULL = { ...CALM, context: { percent: 70, tokens: 140000, window: 200000 } } as unknown as SessionUsage
+const API = { ...USAGE, rateLimits: [], cost: { usd: 3 } } as unknown as SessionUsage
 
 const ran: string[] = []
 let clock: ReturnType<typeof mock.clock>
 
-async function start($: Engine, on: On) {
+// A Map stands as the store itself, so a test can read back what the band wrote.
+async function start($: Engine, on: On, usage: SessionUsage = USAGE, store?: Record<string, unknown> | Map<string, unknown>) {
+  ran.length = 0
   clock = mock.clock(on, { now })
-  mock.store(on)
-  on('session.usage', () => ({ value: USAGE }))
+  if (store instanceof Map) {
+    on('store.get', (_$, e) => ({ value: store.get(e.key) }))
+    on('store.set', (_$, e) => { store.set(e.key, e.value); return { value: undefined } })
+  } else mock.store(on, store)
+  on('session.usage', () => ({ value: usage }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.run', (_$, e) => { ran.push(e.command); return { text: '' } })
   await $.session.start({ cwd: '/', surface: null, isInteractive: true })
 }
 
-test('graphical band draws meters and toggles compact on press', async ($, on) => {
+const mountOn = ($: Engine, surface: 'desktop' | 'vscode' | 'mobile' | 'terminal' = 'desktop') =>
+  $.ui.mount({ plugin: 'usage-band', surface, component: 'AbovePrompt', props: PROPS })
+type Mounted = Awaited<ReturnType<typeof mountOn>>
+const alts = async (ui: Mounted) => (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.alt))
+
+test('graphical band draws the mascot, its bubble and the segment visuals', async ($, on) => {
   await start($, on)
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
-    const ui = await $.ui.mount({ plugin: 'usage-band', surface, component: 'AbovePrompt', props: PROPS })
-    expect(await ui.find({ type: 'Svg' })).toBeDefined()
-    expect(await ui.find({ key: 'refresh' })).toBeDefined()
-    expect((await ui.find({ key: 'toggle' }))?.text).toContain('Hide')
-    await ui.press({ key: 'compact' })
-    await ui.press({ key: 'clear' })
-    await ui.press({ key: 'toggle' })
-    expect(await ui.find({ type: 'Svg' })).toBeUndefined()
-    expect((await ui.find({ key: 'toggle' }))?.text).toContain('Show')
-    await ui.press({ key: 'toggle' })
+    const ui = await mountOn($, surface)
+    const svgs = await ui.findAll({ type: 'Svg' })
+    const mascot = svgs.find(x => String(x.props.alt).startsWith('Mascot'))
+    expect(mascot?.props.alt).toBe('Mascot: pace') // 60% at half the 5h window is on pace for 120%
+    expect(mascot?.props.isInteractive).toBe(true)
+    expect(await ui.find({ type: 'Text', text: /At this pace the 5h limit/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Plan usage' })).toBeDefined()
+    expect(svgs.some(x => String(x.props.alt).startsWith('Context'))).toBe(true)
+    expect(svgs.some(x => String(x.props.alt).startsWith('5h limit'))).toBe(true)
+    expect(await ui.find({ key: 'act' })).toBeUndefined() // pace has no action
     await ui.unmount()
-    expect(ran.splice(0)).toEqual(['compact', 'clear'])
   }
+})
+
+test('the compact action runs /compact, and Later hides it', async ($, on) => {
+  await start($, on, FULL)
+  const ui = await mountOn($)
+  expect(await ui.find({ type: 'Text', text: /Context is at 70%/ })).toBeDefined()
+  expect((await ui.find({ key: 'act' }))?.text).toContain('Compact now')
+  await ui.press({ key: 'act' })
+  expect(ran).toEqual(['compact'])
+  await ui.press({ key: 'later' })
+  expect(await ui.find({ key: 'act' })).toBeUndefined()
+  expect(await ui.find({ key: 'later' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Context is at 70%/ })).toBeDefined() // still says it
+  await ui.unmount()
+})
+
+test('the keep action turns keep-warm on', async ($, on) => {
+  await warmSession($, on, CALM)
+  await finishTurn($)
+  await clock.advance(4 * 60e3 + 10e3) // 50 s left
+  const ui = await mountOn($)
+  expect((await ui.find({ key: 'act' }))?.text).toContain('Keep it warm')
+  expect(await alts(ui)).toContain('Mascot: soon')
+  await ui.press({ key: 'act' })
+  expect(await alts(ui)).toContain('Mascot: keep')
+  expect(await ui.find({ key: 'act' })).toBeUndefined()
+  await ui.press({ key: 'menu' })
+  expect((await ui.find({ key: 'm-warm' }))?.text).toContain('Keep cache warm')
+  expect(await ui.find({ type: 'Text', text: 'on' })).toBeDefined() // the dropdown row's state
+  await ui.unmount()
+})
+
+test('a cold cache offers to turn keep-warm on', async ($, on) => {
+  await warmSession($, on, CALM)
+  await finishTurn($)
+  await clock.advance(6 * 60e3)
+  const ui = await mountOn($)
+  expect((await ui.find({ key: 'act' }))?.text).toContain('Turn on keep-warm')
+  expect(await alts(ui)).toContain('Mascot: cold')
+  await ui.unmount()
+})
+
+test('⋯ toggles the action row, whose buttons run and close it', async ($, on) => {
+  await start($, on, CALM)
+  const ui = await mountOn($)
+  expect(await ui.find({ key: 'm-compact' })).toBeUndefined()
+  // No label of its own: the desktop draws a label in place of the text, so it must stay ⋯.
+  expect((await ui.find({ key: 'menu' }))?.props.label).toBe('⋯')
+  await ui.press({ key: 'menu' })
+  for (const k of ['m-compact', 'm-clear', 'm-warm', 'm-refresh', 'm-hide']) expect(await ui.find({ key: k })).toBeDefined()
+  await ui.press({ key: 'm-compact' })
+  expect(await ui.find({ key: 'm-compact' })).toBeUndefined()
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'm-clear' })
+  expect(ran).toEqual(['compact', 'clear'])
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'menu' })
+  expect(await ui.find({ key: 'm-clear' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Hide shows chips with the mascot in its current mood, Show brings the band back', async ($, on) => {
+  await start($, on, CALM)
+  const ui = await mountOn($)
+  await ui.press({ key: 'menu' })
+  await ui.press({ key: 'm-hide' })
+  const a = await alts(ui)
+  expect(a).toContain('Mascot: warm')
+  expect(a).not.toContain('Mascot: nap')
+  expect(a.filter(x => x === 'Context' || x === '5h limit' || x === 'Weekly' || x === 'API value')).toHaveLength(4) // chip icons
+  expect(a).not.toContain('Tokens') // no token chip on a plan
+  expect(await ui.find({ key: 'm-hide' })).toBeUndefined()
+  await ui.press({ key: 'show' })
+  expect(await alts(ui)).toContain('Mascot: warm')
+  await ui.unmount()
+})
+
+test('api mode draws the spend gauge and no pace bars or day tiles', { options: { budgetUsd: 10 } }, async ($, on) => {
+  await start($, on, API)
+  const ui = await mountOn($)
+  expect(await ui.find({ type: 'Text', text: 'API usage' })).toBeDefined()
+  const a = await alts(ui)
+  expect(a).toContain('Spend 30% of budget')
+  expect(a.some(x => x.startsWith('5h limit') || x === 'Weekly use per day')).toBe(false)
+  await ui.unmount()
+})
+
+test('plan mode draws the 5h pace bar and weekly day tiles, and no gauge', async ($, on) => {
+  await start($, on, CALM, { weekLog: 'garbage from an old version' })
+  const ui = await mountOn($)
+  const a = await alts(ui)
+  expect(a).toContain('Weekly use per day')
+  expect(a.some(x => x.startsWith('5h limit'))).toBe(true)
+  expect(a.some(x => x.startsWith('Weekly 20%'))).toBe(false) // weekly shows day tiles, not a bar
+  expect(a.some(x => x.startsWith('Spend'))).toBe(false)
+  expect(await ui.find({ type: 'Text', text: 'API value'.toUpperCase() })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a main turn samples the weekly limit into the store', async ($, on) => {
+  const kept = new Map<string, unknown>()
+  await warmSession($, on, CALM, kept)
+  await finishTurn($)
+  expect(kept.get('weekLog')).toEqual({ resetsAt: '2026-10-22T00:00:00Z', days: { '2026-10-18': 20 } })
 })
 
 test('terminal keeps the text band', async ($, on) => {
   await start($, on)
-  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const ui = await mountOn($, 'terminal')
   expect(await ui.find({ text: /PLAN/ })).toBeDefined()
-  expect(await ui.find({ key: 'toggle' })).toBeUndefined()
+  expect(await ui.find({ key: 'menu' })).toBeUndefined()
+  expect(await ui.find({ type: 'Svg' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -55,7 +179,7 @@ test('terminal keeps the text band', async ($, on) => {
 const toasts: string[] = []
 let forks = 0
 
-async function warmSession($: Engine, on: On) {
+async function warmSession($: Engine, on: On, usage: SessionUsage = USAGE, store?: Map<string, unknown>) {
   toasts.length = 0
   forks = 0
   on('ui.toast', (_$, e) => { toasts.push(e.text); return { value: undefined } })
@@ -65,9 +189,8 @@ async function warmSession($: Engine, on: On) {
     forks++
     return { value: { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 60000, cache_creation_input_tokens: 0 } } }
   })
-  await start($, on)
+  await start($, on, usage, store)
 }
-
 const finishTurn = async ($: Engine, usage: Record<string, number> = {}) => {
   await $.turn.start({ text: 'hi', turnId: 't1' })
   await $.turn.complete({

@@ -1,5 +1,6 @@
 import { test, expect } from 'claude-code/testing'
-import { addUsage, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, compactLine, emptyCache, emptyTokens, emptyTrend, endTurn, eta, fmtLeft, mode, projected, recordPing, recordTurn, segments, startTurn, turnsLeft, warnings } from './summarize'
+import { addUsage, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, clock, compactLine, dayKey, dayLevels, emptyCache, emptyTokens, emptyTrend, endTurn, eta, explain, fmtLeft, mode, projected, recordDay, recordPing, recordTurn, segments, startTurn, suggest, turnsLeft, warnings } from './summarize'
+import type { SuggestInput } from './summarize'
 import type { Segment } from './summarize'
 
 const now = Date.parse('2026-10-18T12:00:00Z')
@@ -154,4 +155,129 @@ test('a ping renews the cache only when answered, and always uses up a try', () 
   const bad = recordPing(warm, now + 250e3, false)
   expect(bad).toMatchObject({ at: now, pings: 1 })
   expect(endTurn(ok, now + 600e3).pings).toBe(0)
+})
+
+// --- mascot suggestion ---
+
+const usage = { ...api, costUsd: 0 }
+const calm = { ...plan, rateLimits: [{ kind: 'five_hour', percentUsed: 20, resetsAt: reset }] } // pace → 40%
+const ask = (o: Partial<SuggestInput>) =>
+  suggest({ s: usage, now, cache: emptyCache, keepWarm: false, trend: emptyTrend, budgetUsd: 0, dismissed: '', ...o })
+
+test('suggest, plan: pace wins, budget never applies', () => {
+  const g = ask({ s: plan, budgetUsd: 1 })
+  expect(g).toMatchObject({ key: `pace:five_hour:${reset}`, mood: 'pace' })
+  expect(g.text).toBe(`At this pace the 5h limit is hit ~${clock(now + 100 * 60e3, now)}.`)
+  expect(ask({ s: { ...plan, rateLimits: [{ kind: 'five_hour', percentUsed: 100, resetsAt: reset }] } }).text).toBe('5h limit reached.')
+  expect(ask({ s: calm, budgetUsd: 1 }).key).toBe('warm')
+})
+
+test('suggest, api: budget at 90%, never pace', () => {
+  const g = ask({ s: { ...api, contextPercent: 85 }, budgetUsd: 2.1 })
+  expect(g).toMatchObject({ key: 'budget:2.1', mood: 'budget' })
+  expect(g.text).toBe(`$2.00 of your $2.1 budget is spent. Runs out ~${clock(now + 6 * 60e3, now)}.`)
+  expect(ask({ s: { ...api, costUsd: 2.5 }, budgetUsd: 2 }).text).toBe('$2.50 of your $2 budget is spent.')
+  expect(ask({ s: api, budgetUsd: 10 }).key).toBe('warm')
+  expect(ask({ s: api, budgetUsd: 0 }).key).toBe('warm')
+})
+
+test('suggest, usage: only context and cache', () => {
+  expect(ask({ s: usage, budgetUsd: 0.01 }).key).toBe('warm')
+  expect(ask({ s: { ...usage, contextPercent: 70 }, budgetUsd: 0.01 }).mood).toBe('full')
+})
+
+test('suggest: priority budget > context > cold > soon > live > warm', () => {
+  const ctx = { ...usage, contextPercent: 68 }
+  const trend = { lastCost: null, lastTurnUsd: null, ctxHistory: [100000, 110000, 120000] }
+  expect(ask({ s: { ...api, contextPercent: 68 }, budgetUsd: 2, cache: warm, now: now + 400e3 }).mood).toBe('budget')
+  expect(ask({ s: { ...plan, contextPercent: 68 } }).mood).toBe('pace')
+  const c = ask({ s: ctx, trend, cache: warm, now: now + 400e3 })
+  expect(c).toEqual({ key: 'ctx:100000', mood: 'full', text: 'Context is at 68% and ~4 turns from 80%.', action: 'compact' })
+  expect(ask({ s: ctx }).text).toBe('Context is at 68%.')
+  // a steep trend counts even below 60%
+  expect(ask({ s: { ...usage, contextPercent: 40 }, trend: { ...trend, ctxHistory: [130000, 140000, 150000] } }).text).toBe('Context is at 40% and ~1 turn from 80%.')
+  expect(ask({ cache: warm, now: now + 400e3 }).mood).toBe('cold')
+  expect(ask({ cache: warm, now: now + 252e3 })).toEqual({ key: 'soon', mood: 'soon', text: 'Brr… 48s until the cache goes cold.', action: 'keep' })
+  expect(ask({ cache: warm, now: now + 252e3, keepWarm: true })).toEqual({ key: 'keep', mood: 'keep', text: 'Stoking the fire: a keep-warm ping goes out before the cache lapses.' })
+  expect(ask({ cache: startTurn(warm, now), keepWarm: true })).toEqual({ key: 'live', mood: 'live', text: 'On it! The cache refreshes while Claude works.' })
+  expect(ask({ cache: warm, now: now + 120e3 }).text).toBe('Toasty. The cache stays warm for 3m.')
+  expect(ask({ keepWarm: true }).text).toBe('Ready when you are. Keep-warm is on.')
+})
+
+test('suggest: cold text with and without keep-warm', () => {
+  expect(ask({ cache: warm, now: now + 400e3 })).toEqual({ key: 'cold', mood: 'cold', text: 'Frozen solid. Your next message re-caches ~60k tokens. Keep it warm next time?', action: 'keep' })
+  expect(ask({ cache: warm, now: now + 400e3, keepWarm: true })).toEqual({ key: 'cold', mood: 'cold', text: 'Frozen solid. Your next message re-caches ~60k tokens.' })
+})
+
+test('suggest, api: the keep action mentions billing', () => {
+  expect(ask({ s: api, cache: warm, now: now + 252e3 }).text).toBe('Brr… 48s until the cache goes cold. (pings bill as cache reads)')
+  expect(ask({ s: api, cache: warm, now: now + 400e3 }).text).toContain('Keep it warm next time? (pings bill as cache reads)')
+  expect(ask({ s: calm, cache: warm, now: now + 252e3 }).text).not.toContain('bill')
+})
+
+test('suggest: dismissed strips only the action', () => {
+  const open = ask({ s: api, cache: warm, now: now + 252e3 })
+  const shut = ask({ s: api, cache: warm, now: now + 252e3, dismissed: 'soon' })
+  expect(shut).toEqual({ key: open.key, mood: open.mood, text: open.text })
+  expect(ask({ s: api, cache: warm, now: now + 252e3, dismissed: 'cold' }).action).toBe('keep')
+})
+
+// --- weekly day log (local-time dates, so independent of the machine's zone) ---
+
+const at = (d: number, h = 12) => new Date(2026, 9, d, h).getTime() // October 2026; the 18th is a Sunday
+const weekReset = new Date(at(22, 9)).toISOString() // window: Thu 15th 09:00 → Thu 22nd 09:00
+
+test('dayKey is the local date', () => {
+  expect(dayKey(at(5, 0))).toBe('2026-10-05')
+  expect(dayKey(at(5, 23))).toBe('2026-10-05')
+})
+
+test('recordDay: latest sample wins, a new window resets, 8 days kept', () => {
+  let log = recordDay(null, at(15, 10), 3, weekReset)
+  log = recordDay(log, at(15, 20), 4, weekReset)
+  log = recordDay(log, at(16), 9, weekReset)
+  expect(log).toEqual({ resetsAt: weekReset, days: { '2026-10-15': 4, '2026-10-16': 9 } })
+  expect(recordDay(log, at(22, 10), 1, 'next')).toEqual({ resetsAt: 'next', days: { '2026-10-22': 1 } })
+  let long = null as ReturnType<typeof recordDay> | null
+  for (let d = 1; d <= 10; d++) long = recordDay(long, at(d), d, weekReset)
+  expect(Object.keys(long!.days)).toEqual(['2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10'])
+})
+
+test('dayLevels: 7 tiles, future, missing past, deltas, today', () => {
+  const log = { resetsAt: weekReset, days: { '2026-10-15': 4, '2026-10-17': 16, '2026-10-18': 40 } }
+  const tiles = dayLevels(log, at(18), weekReset)
+  expect(tiles.map(t => t.label)).toEqual(['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed'])
+  expect(tiles.map(t => t.level)).toEqual([1, 0, 3, 4, -1, -1, -1])
+  expect(tiles.map(t => t.percent)).toEqual([4, null, 12, 24, null, null, null])
+  expect(tiles.map(t => t.isToday)).toEqual([false, false, false, true, false, false, false])
+  // a drop clamps to 0; a log from another window counts as empty
+  expect(dayLevels({ resetsAt: weekReset, days: { '2026-10-17': 16, '2026-10-18': 10 } }, at(18), weekReset)[3]).toMatchObject({ level: 0, percent: 0 })
+  expect(dayLevels({ ...log, resetsAt: 'old' }, at(18), weekReset).map(t => t.level)).toEqual([0, 0, 0, 0, -1, -1, -1])
+  expect(dayLevels(null, at(18), weekReset).length).toBe(7)
+})
+
+test('explain: one essential line, or none', () => {
+  const now = Date.parse('2026-10-20T15:00:00Z')
+  const s = {
+    contextPercent: 37, contextTokens: 369_000, contextWindow: 1_000_000, costUsd: 16.83, startedAt: now - 2 * 3600e3,
+    rateLimits: [{ kind: 'five_hour', percentUsed: 50, resetsAt: new Date(now + 4 * 3600e3).toISOString() }], // 1h in: runs out early
+  }
+  const x = {
+    s, now, keepWarm: true, budgetUsd: 0,
+    t: { in: 600_000, out: 229_000, cacheRead: 30_000_000, cacheWrite: 30_000 },
+    cache: { at: now - 60e3, ttlMs: 3600e3, active: false, pings: 0, alerted: [] },
+    trend: { lastCost: 16.83, lastTurnUsd: 0.29, ctxHistory: [] },
+  }
+  const seg = (label: string): Segment => ({ label, value: '', detail: 'short', short: '', percent: null, level: 'success' })
+  expect(explain(seg('Context'), x)).toEqual([]) // no trend yet
+  expect(explain(seg('Context'), { ...x, trend: { ...x.trend, ctxHistory: [300_000, 330_000, 369_000] } })).toEqual(['~13 turns left'])
+  expect(explain(seg('Cache'), x)).toEqual(['Keeping warm'])
+  expect(explain(seg('Cache'), { ...x, keepWarm: false })).toEqual([]) // warm: the value says it
+  expect(explain(seg('Cache'), { ...x, keepWarm: false, cache: { ...x.cache, at: now - 3600e3 + 60e3 } })).toEqual(['Running out'])
+  expect(explain(seg('Cache'), { ...x, cache: { ...x.cache, at: now - 3600e3 - 1 } })).toEqual(['Expired'])
+  expect(explain(seg('5h limit'), x)[0]).toMatch(/^Runs out ~\d\d:\d\d$/)
+  expect(explain(seg('API value'), x)).toEqual(explain(seg('5h limit'), x)) // the first limit to run out
+  expect(explain(seg('API value'), { ...x, s: { ...s, rateLimits: [] } })).toEqual([])
+  expect(explain(seg('Tokens'), x)).toEqual(['98% cache read'])
+  expect(explain(seg('Spend'), { ...x, budgetUsd: 10 })).toEqual(['Over budget'])
 })
