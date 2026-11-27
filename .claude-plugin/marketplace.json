@@ -23,6 +23,12 @@
       "description": "Live pane of the test runs Claude makes through Bash: pass/fail per test, flaky tests flagged, rerun only the failed ones, and a Fix with Claude prompt draft.",
       "source": "./test-pane",
       "category": "development"
+    },
+    {
+      "name": "theme-builder",
+      "description": "A skill that builds your own theme mod for the Claude desktop and mobile apps: light and dark palettes from a mood or colors, contrast checked until Desktop paints it, with an optional backdrop, message style and sound.",
+      "source": "./theme-builder",
+      "category": "development"
     }
   ]
 }

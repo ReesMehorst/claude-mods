@@ -1,0 +1,32 @@
+{
+  "name": "__MOD_NAME__",
+  "version": "0.1.0",
+  "description": "__DESCRIPTION__",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "contextSpeed": {
+      "type": "boolean",
+      "title": "Move faster as the context fills",
+      "description": "The scene moves faster as the context fills, and shows its warning color from 80%: time to compact.",
+      "default": true
+    },
+    "moveWhileWorking": {
+      "type": "boolean",
+      "title": "Move only while Claude works",
+      "description": "The scene moves while Claude is working and rests while it waits for you. Off, it always moves.",
+      "default": true
+    },
+    "coldCache": {
+      "type": "boolean",
+      "title": "Cool down when the prompt cache goes cold",
+      "description": "The scene warns in the cache's last minute. Once it lapses, the scene stills and the app's colors cool, until your next message re-caches the context.",
+      "default": true
+    },
+    "soundFollows": {
+      "type": "boolean",
+      "title": "Sound follows the session",
+      "description": "With the theme's sound on: it rests while Claude waits, rises with the context while it works, and falls quiet when the cache is cold. Off, it plays the same always.",
+      "default": true
+    }
+  }
+}
