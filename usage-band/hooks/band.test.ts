@@ -165,6 +165,17 @@ test('a main turn samples the weekly limit into the store', async ($, on) => {
   expect(kept.get('weekLog')).toEqual({ resetsAt: '2026-10-22T00:00:00Z', days: { '2026-10-18': 20 } })
 })
 
+test('turns add their own cost to the month', async ($, on) => {
+  const kept = new Map<string, unknown>()
+  const usage = { ...API, cost: { usd: 3 } } as unknown as SessionUsage & { cost: { usd: number } }
+  await warmSession($, on, usage, kept)
+  usage.cost.usd = 5 // the session had $3 when it started: only the $2 since counts
+  await finishTurn($)
+  usage.cost.usd = 5.5
+  await finishTurn($)
+  expect(kept.get('monthLog')).toEqual({ month: '2026-10', since: '2026-10-18', api: 2.5, plan: 0 })
+})
+
 test('terminal keeps the text band', async ($, on) => {
   await start($, on)
   const ui = await mountOn($, 'terminal')

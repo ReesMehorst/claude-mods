@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren, SessionUsage } from 'claude-code'
 
-import type { DayLog, Snapshot } from '../types'
-import { addUsage, bar, cacheAlerts, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, leadMs, mode, projected, recordDay, recordPing, recordTurn, segments, startTurn, suggest, warnings } from './summarize'
+import type { DayLog, MonthLog, Snapshot } from '../types'
+import { addUsage, bar, cacheAlerts, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, leadMs, mode, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, warnings } from './summarize'
 import type { Segment } from './summarize'
 import { dayTilesSvg, gaugeSvg, iconSvg, mascotSvg, miniMeterSvg, paceSvg, ringSvg, splitSvg, thermometerSvg } from './art'
 import type { IconName } from './art'
@@ -39,6 +39,14 @@ const asDayLog = (v: unknown): DayLog | null => {
   return Object.values(days).every(n => typeof n === 'number' && Number.isFinite(n)) ? { resetsAt, days: days as Record<string, number> } : null
 }
 
+// The stored month log from an older version or a damaged store reads as no log.
+const asMonthLog = (v: unknown): MonthLog | null => {
+  if (!v || typeof v !== 'object') return null
+  const { month, since, api, plan } = v as Record<string, unknown>
+  const isMoney = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0
+  return typeof month === 'string' && typeof since === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(since) && isMoney(api) && isMoney(plan) ? { month, since, api, plan } : null
+}
+
 // The drawn size of an art builder's SVG, read from its root tag.
 const size = (svg: string) => {
   const head = svg.slice(0, svg.indexOf('>'))
@@ -65,6 +73,8 @@ async function setKeepWarm($: EngineInterface, isOn: boolean) {
 }
 
 const closeMenu = ($: EngineInterface) => update($, menuOpen, () => false)
+
+let lastCost: number | null = null // session cost at the last turn's end, so each turn adds only its own cost to the month
 
 let isPinging = false // a keep-warm fork is out; its own events must not count as a turn
 
@@ -101,6 +111,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'usage-band', description: 'Toggle the usage band between full and compact' })
+    await $.command.register({ name: 'spent', description: "Show this month's API spend (or plan usage as API value)" })
     await $.command.register({ name: 'keep-warm', description: 'Keep the prompt cache warm while idle: on, off, or no argument to toggle', argumentHint: '[on|off]' })
     const isCompact = (await $.store.get('compact')) === true
     await update($, compact, () => isCompact)
@@ -110,6 +121,7 @@ export const register: Register = (on, options) => {
     await update($, weekLog, () => log)
     $.clock.every(5000, () => tick($, { maxPings, minTokens }))
     const s = build(await $.session.usage())
+    lastCost = s.costUsd
     await update($, snap, () => s)
     return r
   })
@@ -145,6 +157,13 @@ export const register: Register = (on, options) => {
     const t = await update($, trend, t => recordTurn(t, s.costUsd, s.contextTokens))
     if (mode(s) === 'api' && turnWarn > 0 && (t.lastTurnUsd ?? 0) >= turnWarn)
       $.ui.toast(`⚠ That turn cost $${t.lastTurnUsd!.toFixed(2)}`, { timeoutMs: 8000 })
+    // Monthly spend: this turn's share of the session cost, kept across sessions.
+    if (s.costUsd != null) {
+      const delta = s.costUsd - (lastCost ?? 0)
+      lastCost = s.costUsd
+      const log = recordSpend(asMonthLog(await $.store.get('monthLog')), await $.clock.now(), delta, mode(s) === 'plan')
+      if (log) await $.store.set('monthLog', log)
+    }
     // Weekly day tiles: one sample per local day, taken while the mod runs.
     const week = s.rateLimits.find(x => x.kind === 'seven_day')
     if (week?.resetsAt) {
@@ -156,6 +175,8 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'usage-band' }, async $ => ({ text: `Usage band: ${(await toggle($)) ? 'compact' : 'full'}` }))
+
+  on('command.run', { command: 'spent' }, async $ => ({ text: spentReport(asMonthLog(await $.store.get('monthLog')), await $.clock.now()) }))
 
   on('command.run', { command: 'keep-warm' }, async ($, e) => {
     const arg = String(e.args ?? '').trim().toLowerCase()

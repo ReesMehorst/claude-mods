@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { addUsage, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, clock, compactLine, dayKey, dayLevels, emptyCache, emptyTokens, emptyTrend, endTurn, eta, explain, fmtLeft, mode, projected, recordDay, recordPing, recordTurn, segments, startTurn, suggest, turnsLeft, warnings } from './summarize'
+import { addUsage, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, clock, compactLine, dayKey, dayLevels, emptyCache, emptyTokens, emptyTrend, endTurn, eta, explain, fmtLeft, mode, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, turnsLeft, warnings } from './summarize'
 import type { SuggestInput } from './summarize'
 import type { Segment } from './summarize'
 
@@ -280,4 +280,29 @@ test('explain: one essential line, or none', () => {
   expect(explain(seg('API value'), { ...x, s: { ...s, rateLimits: [] } })).toEqual([])
   expect(explain(seg('Tokens'), x)).toEqual(['98% cache read'])
   expect(explain(seg('Spend'), { ...x, budgetUsd: 10 })).toEqual(['Over budget'])
+})
+
+// --- monthly spend ---
+
+test('recordSpend: adds per kind, a new month starts fresh, bad costs change nothing', () => {
+  let log = recordSpend(null, at(2), 1.5, false)
+  expect(log).toEqual({ month: '2026-10', since: '2026-10-02', api: 1.5, plan: 0 })
+  log = recordSpend(log, at(9), 2, true)
+  log = recordSpend(log, at(9), 0.5, false)
+  expect(log).toEqual({ month: '2026-10', since: '2026-10-02', api: 2, plan: 2 })
+  expect(recordSpend(log, at(9), 0, false)).toBe(log)
+  expect(recordSpend(log, at(9), -3, false)).toBe(log)
+  expect(recordSpend(log, at(9), NaN, false)).toBe(log)
+  expect(recordSpend(null, at(9), 0, false)).toBeNull()
+  expect(recordSpend(log, new Date(2026, 10, 1, 12).getTime(), 4, false)).toEqual({ month: '2026-11', since: '2026-11-01', api: 4, plan: 0 })
+})
+
+test('spentReport: empty, API spend, plan value, and the month-end pace', () => {
+  expect(spentReport(null, at(18))).toContain('No spend tracked in October')
+  expect(spentReport({ month: '2026-09', since: '2026-09-02', api: 9, plan: 0 }, at(18))).toContain('No spend tracked in October') // last month's log
+  const api = spentReport({ month: '2026-10', since: '2026-10-01', api: 18, plan: 0 }, at(18)).split('\n')
+  expect(api).toEqual(['October spend (tracked since Oct 1)', 'API spend: $18.00', 'On pace for ~$31.00 API spend by month end']) // $1/day, 13 days left
+  const both = spentReport({ month: '2026-10', since: '2026-10-17', api: 1, plan: 40 }, at(18)).split('\n')
+  expect(both).toEqual(['October spend (tracked since Oct 17)', 'API spend: $1.00', 'Plan usage: $40.00 at API prices (included in your plan)']) // 2 days tracked: too early to extrapolate
+  expect(spentReport({ month: '2026-10', since: '2026-10-01', api: 0, plan: 36 }, at(18))).toContain('On pace for ~$62.00 plan value by month end')
 })

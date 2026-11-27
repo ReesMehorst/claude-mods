@@ -58,6 +58,22 @@ mood; *Show* brings the band back, and the choice is remembered:
 usage" once something is billed without them, and "Usage" before either. A plan never talks
 budget and API never talks pace; on API credits the keep-warm suggestion says the pings are billed.
 
+**Monthly spend**: `/spent` shows what the month has cost so far: *API spend* for turns billed on
+API credits, and *Plan usage* (the same turns at API prices, included in your plan) for turns on a
+subscription, plus where the month lands at the pace so far once three days are tracked. Each
+finished turn adds its own cost to a total kept across sessions, so it counts only what the mod
+saw: days before you installed it, or with Claude Code open without it, are not in the sum (the
+header says *tracked since* the first day). A new month starts from zero.
+
+The total lives on this machine and only counts local sessions where the mod is loaded. It won't
+count:
+
+- **Cloud sessions** (claude.ai/code): they run on a remote machine without your installed mods.
+- **Other computers**: each install keeps its own total.
+- **Turns before you installed it**, or from sessions running without the mod.
+
+For your full plan usage, see the usage page in your claude.ai account settings.
+
 **Prompt cache and keep-warm**: the cache your chat rides on lapses after 5 minutes, or 1 hour
 when it was written that way; the next message then re-caches the whole context. A toast warns
 before it lapses and when it has (not while the context is under 20k tokens,

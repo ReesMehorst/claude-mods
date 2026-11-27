@@ -30,6 +30,11 @@ export type DayLog = { resetsAt: string; days: Record<string, number> }
 // One tile of the weekly strip. level: -1 still to come, 0 no use, 1–4 light to heavy.
 export type DayTile = { label: string; level: -1 | 0 | 1 | 2 | 3 | 4; isToday: boolean; percent: number | null }
 
+// Spend of one calendar month (month: YYYY-MM), added up from finished turns while the mod runs, across
+// sessions. api: billed on API credits; plan: value of plan usage at API prices (included in the plan).
+// since: first day (YYYY-MM-DD) of the month with any spend tracked.
+export type MonthLog = { month: string; since: string; api: number; plan: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'usage-band': { snap: Snapshot | null; tokens: Tokens; trend: Trend; warned: string[]; compact: boolean; cache: Cache; keepWarm: boolean; pulse: number; menuOpen: boolean; dismissed: string; weekLog: DayLog | null }

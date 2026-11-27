@@ -1,4 +1,4 @@
-import type { Cache, DayLog, DayTile, Snapshot, Suggestion, Tokens, Trend } from '../types'
+import type { Cache, DayLog, DayTile, MonthLog, Snapshot, Suggestion, Tokens, Trend } from '../types'
 
 export type Mode = 'plan' | 'api' | 'usage'
 export type Level = 'success' | 'warning' | 'error'
@@ -412,4 +412,36 @@ export const explain = (seg: Segment, x: ExplainInput): string[] => {
     default:
       return []
   }
+}
+
+// --- Monthly spend -----------------------------------------------------------------------
+
+// Adds one turn's cost to the month's log; a new month starts a fresh log. A cost that is not a
+// positive number (a reset session, a missing figure) changes nothing.
+export const recordSpend = (log: MonthLog | null, now: number, deltaUsd: number, isPlan: boolean): MonthLog | null => {
+  if (!(deltaUsd > 0) || !Number.isFinite(deltaUsd)) return log
+  const today = dayKey(now)
+  const month = today.slice(0, 7)
+  const base: MonthLog = log?.month === month ? log : { month, since: today, api: 0, plan: 0 }
+  return isPlan ? { ...base, plan: base.plan + deltaUsd } : { ...base, api: base.api + deltaUsd }
+}
+
+const usd = (n: number) => `$${n.toFixed(2)}`
+
+// What /spent says: API spend, plan value, and where the month lands at the pace so far.
+export const spentReport = (log: MonthLog | null, now: number): string => {
+  const d = new Date(now)
+  const name = d.toLocaleDateString('en-US', { month: 'long' })
+  const cur = log?.month === dayKey(now).slice(0, 7) ? log : null
+  if (!cur || cur.api + cur.plan <= 0) return `No spend tracked in ${name} yet: turns are added up as they finish, in every session.`
+  const [y, m, day] = cur.since.split('-').map(Number) as [number, number, number]
+  const since = new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const lines = [`${name} spend (tracked since ${since})`]
+  if (cur.api > 0) lines.push(`API spend: ${usd(cur.api)}`)
+  if (cur.plan > 0) lines.push(`Plan usage: ${usd(cur.plan)} at API prices (included in your plan)`)
+  const tracked = d.getDate() - day + 1
+  const daysLeft = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate()
+  const total = cur.api > 0 ? cur.api : cur.plan
+  if (tracked >= 3 && daysLeft > 0) lines.push(`On pace for ~${usd(total + (total / tracked) * daysLeft)}${cur.api > 0 ? ' API spend' : ' plan value'} by month end`)
+  return lines.join('\n')
 }
