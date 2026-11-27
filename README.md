@@ -9,6 +9,7 @@ Claude Code mods by [ReesMehorst](https://github.com/ReesMehorst).
 /plugin install usage-band@reesmehorst
 /plugin install github-pane@reesmehorst
 /plugin install test-pane@reesmehorst
+/plugin install theme-builder@reesmehorst
 ```
 
 Answer `y` to add the marketplace, then pick a scope.
@@ -142,6 +143,33 @@ of a session (closing it keeps it closed; `/tests` brings it back).
 - **Fix with Claude** (`f`) puts the failing names (flaky ones set apart) and the output tail
   in the prompt box as a draft. Nothing is sent until you press Enter.
 - The last 8 of up to 30 runs sit at the bottom; pick one to view it, *Clear* empties the list.
+
+### theme-builder
+
+A skill that makes your own theme mod for the Claude desktop and mobile apps. Ask for one in
+your own words: "make me a theme like a rainy Tokyo night", "a theme in my brand's teal".
+
+- **From an idea to a palette**: Claude picks tinted surfaces and text for light and dark, plus
+  the accent, danger, success, warning and pro colors that also color code.
+- **Checked before it loads**: `scripts/check-theme.mjs` runs the design system's own color
+  builder on the palette, prints a contrast table per mode and flags anything that would stop
+  Desktop painting the theme. `--html` writes a swatch page to look at first.
+- **Extras on request**: a still or moving backdrop, message style (bubbles, fonts, tilt) and
+  ambient sound.
+- **Reacts to your session, if you want**: pick any of these and the theme gets a live scene
+  that follows along, each a switch in its settings:
+  - *Move while Claude works*: moves during a turn, rests while Claude waits for you.
+  - *Faster as the context fills*: speeds up at 35%, 60% and 80% context, with a warning color
+    from 80% (time to compact).
+  - *Cool down when the cache goes cold*: a cue in the prompt cache's last minute, then a still
+    scene and cooler app colors once it lapses, until your next message.
+  - *Sound follows the session*: rests, rises with the context, falls quiet when cold.
+
+  These themes come with tests, and the checker checks their cold colors too.
+- **Yours to keep**: the result is a normal mod folder that hot-reloads while you tweak it
+  ("warmer", "less contrast in dark") and can be shared from its own GitHub repo.
+
+The terminal and editors keep their own colors; themes draw in the desktop and mobile apps.
 
 ## Develop
 

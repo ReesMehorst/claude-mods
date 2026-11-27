@@ -1,0 +1,6 @@
+{
+  "name": "theme-builder",
+  "author": { "name": "ReesMehorst" },
+  "version": "0.2.0",
+  "description": "A skill that builds your own theme mod for the Claude desktop and mobile apps: a palette for light and dark, contrast checked, plus an optional backdrop, message style and sound."
+}
