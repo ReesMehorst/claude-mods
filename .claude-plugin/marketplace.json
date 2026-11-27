@@ -1,7 +1,10 @@
 {
   "name": "reesmehorst",
   "description": "Claude Code mods by ReesMehorst",
-  "owner": { "name": "ReesMehorst", "url": "https://github.com/ReesMehorst" },
+  "owner": {
+    "name": "ReesMehorst",
+    "url": "https://github.com/ReesMehorst"
+  },
   "plugins": [
     {
       "name": "usage-band",
@@ -13,6 +16,12 @@
       "name": "github-pane",
       "description": "Live GitHub pane for the current repo: PRs with CI and review state, workflow runs, issues and what needs you.",
       "source": "./github-pane",
+      "category": "development"
+    },
+    {
+      "name": "test-pane",
+      "description": "Live pane of the test runs Claude makes through Bash: pass/fail per test, flaky tests flagged, rerun only the failed ones, and a Fix with Claude prompt draft.",
+      "source": "./test-pane",
       "category": "development"
     }
   ]

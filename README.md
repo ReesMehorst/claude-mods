@@ -8,6 +8,7 @@ Claude Code mods by [ReesMehorst](https://github.com/ReesMehorst).
 /plugin marketplace add ReesMehorst/claude-mods
 /plugin install usage-band@reesmehorst
 /plugin install github-pane@reesmehorst
+/plugin install test-pane@reesmehorst
 ```
 
 Answer `y` to add the marketplace, then pick a scope.
@@ -104,6 +105,27 @@ toggles a one-line view there too.
 
 <img width="724" height="978" alt="image" src="https://github.com/user-attachments/assets/1c2217b3-0fcb-4dc6-a153-a09ec6912e1d" />
 <img width="722" height="928" alt="image" src="https://github.com/user-attachments/assets/7282696a-db99-4a64-95e6-11548bd338f0" />
+
+### test-pane
+
+A live pane of the tests Claude runs through Bash. It opens by itself on the first test run
+of a session (closing it keeps it closed; `/tests` brings it back).
+
+- **Picks up** pytest, jest, vitest, `go test`, `cargo test`, `node --test`, mocha, `bun test`,
+  `deno test`, and `npm`/`pnpm`/`yarn test` scripts (plus make, rspec, gradle and the like,
+  counted from their summary line). Background runs are skipped.
+- **Per test**: failures first, then a skipped count and a folded *N passed* list (`p`);
+  *Output* (`o`) shows the last 40 lines of the run.
+- **Flaky**: a test that both passed and failed with no file edited in between gets a
+  *flaky* pill and a toast; the pane lists every flaky test of the session. Edits are counted
+  from Edit/Write calls and from Bash commands that may write.
+- **Rerun failed** (`x`) builds a command for just the failing tests from the run's own
+  command (`pytest -v ids`, `-t` for jest/vitest/bun, `-run` for go, `--exact` for cargo,
+  `--test-name-pattern`, `--grep`, `--filter`) and runs it in the session's folder.
+  **Rerun all** (`a`) repeats the command. Pane reruns are listed with the rest.
+- **Fix with Claude** (`f`) puts the failing names (flaky ones set apart) and the output tail
+  in the prompt box as a draft. Nothing is sent until you press Enter.
+- The last 8 of up to 30 runs sit at the bottom; pick one to view it, *Clear* empties the list.
 
 ## Develop
 

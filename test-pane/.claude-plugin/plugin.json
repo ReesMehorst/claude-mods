@@ -1,0 +1,7 @@
+{
+  "name": "test-pane",
+  "author": { "name": "ReesMehorst" },
+  "version": "0.1.0",
+  "description": "Live pane of the test runs Claude makes through Bash: pass/fail per test, flaky tests flagged, rerun only the failed ones, and a Fix with Claude prompt draft.",
+  "types": "./types/index.d.ts"
+}
