@@ -42,6 +42,9 @@ const scene = async ($: Engine) => {
   return { alt: String(svg?.props.alt), source: String(svg?.props.source) }
 }
 
+// Every reaction on, whatever the manifest's defaults are, for the tests of the reactions.
+const ALL = { options: { contextSpeed: true, moveWhileWorking: true, coldCache: true, soundFollows: true } }
+
 const moving = (svg: string) => /animation:[a-z-]+ \d/.test(svg)
 
 test('both palettes paint on Desktop', () => {
@@ -82,7 +85,7 @@ test('the sound differs at rest, at full context and when cold', () => {
   expect(new Set([rest, full, cold]).size).toBe(3)
 })
 
-test('a session moves through a turn, rests after it, and cools once the cache lapses', async ($, on) => {
+test('a session moves through a turn, rests after it, and cools once the cache lapses', ALL, async ($, on) => {
   await start($, on)
   expect((await scene($)).alt).toContain('at rest')
   await $.turn.start({ text: 'hi', turnId: 't1' })
@@ -98,7 +101,7 @@ test('a session moves through a turn, rests after it, and cools once the cache l
   expect(sets.at(-1)?.colors).toEqual(warmColors)
 })
 
-test('a filling context changes the scene on the next turn', async ($, on) => {
+test('a filling context changes the scene on the next turn', ALL, async ($, on) => {
   await start($, on)
   await $.turn.start({ text: 'a', turnId: 't0' })
   const low = (await scene($)).source
