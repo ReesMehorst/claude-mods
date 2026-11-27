@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren, SessionUsage } from 'claude-code'
 
 import type { Cache, DayLog, MonthLog, Snapshot, Tokens, Trend } from '../types'
-import { addUsage, asLimits, bar, cacheAlerts, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, freshestLimits, isPaused, leadMs, mayPing, mode, pingMissed, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, warnings } from './summarize'
-import type { Limit, Segment } from './summarize'
+import { addUsage, asLimits, bar, cacheAlerts, fromProxy, proxyWillPing, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, freshestLimits, isPaused, leadMs, mayPing, mode, pingMissed, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, warnings } from './summarize'
+import type { Limit, ProxyChat, Segment } from './summarize'
 import { dayTilesSvg, gaugeSvg, iconSvg, mascotSvg, miniMeterSvg, paceSvg, ringSvg, splitSvg, thermometerSvg } from './art'
 import type { IconName } from './art'
 
@@ -26,6 +26,7 @@ const chatState = ($: EngineInterface, id: string) => ({
     cache: () => read($, atom({ plugin: 'usage-band', key: 'cache', id } as const, emptyCache)),
     keepWarm: () => read($, atom({ plugin: 'usage-band', key: 'keepWarm', id } as const, null)),
     dismissed: () => read($, atom({ plugin: 'usage-band', key: 'dismissed', id } as const, '')),
+    proxyPings: () => read($, atom({ plugin: 'usage-band', key: 'proxyPings', id } as const, null)),
   },
   set: {
     snap: (f: (v: Snapshot | null) => Snapshot | null) => update($, atom({ plugin: 'usage-band', key: 'snap', id } as const, null), f),
@@ -35,6 +36,7 @@ const chatState = ($: EngineInterface, id: string) => ({
     cache: (f: (v: Cache) => Cache) => update($, atom({ plugin: 'usage-band', key: 'cache', id } as const, emptyCache), f),
     keepWarm: (f: (v: boolean | null) => boolean | null) => update($, atom({ plugin: 'usage-band', key: 'keepWarm', id } as const, null), f),
     dismissed: (f: (v: string) => string) => update($, atom({ plugin: 'usage-band', key: 'dismissed', id } as const, ''), f),
+    proxyPings: (f: (v: number | null) => number | null) => update($, atom({ plugin: 'usage-band', key: 'proxyPings', id } as const, null), f),
   },
 })
 type Chat = ReturnType<typeof chatState> & { id: string }
@@ -140,11 +142,76 @@ const pinging = new Set<string>() // a keep-warm fork is out; its own events mus
 const lastTick = new Map<string, number>() // when the tick last ran, to see that the process was paused
 const holdOnce = new Set<string>() // a client just attached: decide pings on the next tick, with fresh time
 
-type CacheOptions = { maxPings: number; minTokens: number; keepWarmDefault: boolean }
+// --- Proxy keep-warm ------------------------------------------------------------------------
+// A local proxy (proxy/keepwarm-proxy.mjs) that keeps chats warm even while they're closed: this
+// chat's API requests go through it, and it resends a chat's last request before its cache lapses.
+// The base URL is set on this chat's own process only, and only while the proxy answers, so a
+// proxy that is down never stands between a chat and the API.
+
+type ProxyOptions = { isOn: boolean; port: number }
+const proxyState = { isRouted: false, fails: 0, lastLaunch: -Infinity, ownBase: undefined as string | null | undefined, hasToldNoNode: false }
+
+async function kw($: EngineInterface, port: number, path: string, body?: unknown): Promise<unknown> {
+  try {
+    const r = await $.http.fetch(`http://127.0.0.1:${port}${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'x-kw-client': 'usage-band', 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    return r.ok ? JSON.parse(r.text) : null
+  } catch {
+    return null
+  }
+}
+
+async function route($: EngineInterface, port: number | null) {
+  await $.env.set('ANTHROPIC_BASE_URL', port == null ? undefined : `http://127.0.0.1:${port}`)
+  await $.env.set('CLAUDE_CODE_GATEWAY_HINT_HEADERS', port == null ? undefined : '1')
+  proxyState.isRouted = port != null
+}
+
+// Every tick with proxy keep-warm on: start the proxy if it isn't running, route this chat through
+// it while it answers (and back to the API after two misses), and tell it this chat's keep-warm.
+// Returns what the proxy knows of this chat, or null while it doesn't cover it.
+async function proxyTick($: EngineInterface, ch: Chat, o: ProxyOptions, isOn: boolean, opts: { maxPings: number; minTokens: number }, now: number): Promise<ProxyChat | null> {
+  // A base URL other than the API's own, set before us, is someone's gateway: leave it alone.
+  if (proxyState.ownBase === undefined) {
+    const base = (await $.env.get('ANTHROPIC_BASE_URL')) ?? ''
+    proxyState.ownBase = /^https:\/\/api\.anthropic\.com\/?$/.test(base) || !base ? null : base
+  }
+  if (proxyState.ownBase) return null
+  const health = await kw($, o.port, '/_kw/health')
+  if (!health) {
+    proxyState.fails++
+    if (proxyState.isRouted && proxyState.fails >= 2) {
+      await route($, null)
+      $.ui.toast('🧊 Keep-warm proxy is not answering: this chat talks to the API directly until it is back', { timeoutMs: 10000 })
+    }
+    if (now - proxyState.lastLaunch >= 60e3) {
+      proxyState.lastLaunch = now
+      try {
+        await $.process.run(['node', `${$.plugin.root}/proxy/keepwarm-proxy.mjs`, '--launch', '--port', String(o.port)], { timeoutMs: 10e3 })
+      } catch {
+        if (!proxyState.hasToldNoNode) $.ui.toast('🧊 Proxy keep-warm needs Node.js on the PATH to start the proxy', { timeoutMs: 10000 })
+        proxyState.hasToldNoNode = true
+      }
+    }
+    return null
+  }
+  proxyState.fails = 0
+  if (!proxyState.isRouted) {
+    await route($, o.port)
+    await kw($, o.port, '/_kw/options', opts)
+  }
+  const p = (await kw($, o.port, `/_kw/chat/${ch.id}`, { on: isOn })) as ProxyChat | null
+  return p && typeof p.pings === 'number' ? p : null
+}
+
+type CacheOptions = { maxPings: number; minTokens: number; keepWarmDefault: boolean; proxy: ProxyOptions }
 
 // Every 5 s: follow the shared limits, redraw the countdown, send a keep-warm ping when one is
 // due, else toast the cold warnings.
-async function tick($: EngineInterface, { maxPings, minTokens, keepWarmDefault }: CacheOptions) {
+async function tick($: EngineInterface, { maxPings, minTokens, keepWarmDefault, proxy }: CacheOptions) {
   const ch = await chat($)
   const now = await $.clock.now()
   const wasHeld = holdOnce.delete(ch.id)
@@ -157,13 +224,19 @@ async function tick($: EngineInterface, { maxPings, minTokens, keepWarmDefault }
   const s = held ? await withSharedLimits($, held) : await snapshot($)
   if (!held || JSON.stringify(s.rateLimits) !== JSON.stringify(held.rateLimits)) await ch.set.snap(() => s)
 
+  const isOn = await loadKeepWarm($, ch, keepWarmDefault)
+  // While the proxy covers the chat it does the pinging (also once the chat is closed), and the
+  // countdown follows its last ping; this chat's own pings stand down.
+  const viaProxy = proxy.isOn ? await proxyTick($, ch, proxy, isOn, { maxPings, minTokens }, now) : null
+  await ch.set.proxyPings(() => (viaProxy ? viaProxy.pings : null))
+  if (viaProxy) await ch.set.cache(x => fromProxy(x, viaProxy))
+
   const c = await ch.get.cache()
   const left = cacheLeft(c, now)
   if (left == null) return
   await update($, pulse, n => n + 1)
   const ctx = s?.contextTokens ?? null
-  const isOn = await loadKeepWarm($, ch, keepWarmDefault)
-  const willPing = isOn && !c.missed && c.pings < maxPings && (ctx ?? 0) >= minTokens
+  const willPing = isOn && !viaProxy && !c.missed && c.pings < maxPings && (ctx ?? 0) >= minTokens
   // After a pause, what this chat knew is stale: skip a beat and decide on the next tick.
   if (willPing && !wasPaused && !pinging.has(ch.id) && mayPing(c, now, maxPings)) {
     pinging.add(ch.id)
@@ -185,7 +258,7 @@ async function tick($: EngineInterface, { maxPings, minTokens, keepWarmDefault }
     }
     return
   }
-  const fresh = cacheAlerts(c, now, ctx, minTokens, willPing).filter(a => !c.alerted.includes(a.key))
+  const fresh = cacheAlerts(c, now, ctx, minTokens, willPing || (isOn && proxyWillPing(viaProxy))).filter(a => !c.alerted.includes(a.key))
   for (const a of fresh) $.ui.toast(`🧊 ${a.text}`, { timeoutMs: 10000 })
   if (fresh.length) await ch.set.cache(x => ({ ...x, alerted: [...x.alerted, ...fresh.map(a => a.key)] }))
 }
@@ -206,12 +279,16 @@ async function warn($: EngineInterface, ch: Chat, s: Snapshot, budget: number) {
   if (shared.length) await $.store.set('warnedLimits', [...seenShared, ...shared].slice(-20))
 }
 
+// Option values may arrive as text ("true") as well as booleans.
+const isTrue = (v: unknown) => v === true || v === 'true'
+
 export const register: Register = (on, options) => {
   const budget = Number(options.budgetUsd ?? 0)
   const turnWarn = Number(options.turnWarnUsd ?? 0)
   const maxPings = Math.max(0, Math.floor(Number(options.keepWarmMaxPings ?? 3)))
   const minTokens = Math.max(0, Number(options.coldMinTokens ?? 20000))
-  const keepWarmDefault = options.keepWarm === true
+  const keepWarmDefault = isTrue(options.keepWarm)
+  const proxy: ProxyOptions = { isOn: isTrue(options.proxyKeepWarm), port: Math.floor(Number(options.proxyPort ?? 8787)) || 8787 }
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'usage-band', description: 'Toggle the usage band between full and compact' })
@@ -223,7 +300,9 @@ export const register: Register = (on, options) => {
     await loadKeepWarm($, ch, keepWarmDefault)
     const log = asDayLog(await $.store.get('weekLog'))
     await update($, weekLog, () => log)
-    $.clock.every(5000, () => tick($, { maxPings, minTokens, keepWarmDefault }))
+    $.clock.every(5000, () => tick($, { maxPings, minTokens, keepWarmDefault, proxy }))
+    // Start the proxy and route through it before the first request when it is already running.
+    if (proxy.isOn) await proxyTick($, ch, proxy, await loadKeepWarm($, ch, keepWarmDefault), { maxPings, minTokens }, await $.clock.now())
     const s = await snapshot($)
     lastCost.set(ch.id, s.costUsd)
     await ch.set.snap(() => s)
@@ -307,7 +386,7 @@ export const register: Register = (on, options) => {
     const c = await ch.get.cache()
     const tr = await ch.get.trend()
     const tok = await ch.get.tokens()
-    const keep = { isOn: (await ch.get.keepWarm()) ?? keepWarmDefault, maxPings }
+    const keep = { isOn: (await ch.get.keepWarm()) ?? keepWarmDefault, maxPings, proxyPings: await ch.get.proxyPings() }
     const segs = segments(s, tok, now, budget, tr, c, keep)
 
     // Graphical surfaces (desktop, vscode, mobile): mascot, bubble and drawn meters. Terminal keeps the text band below.
