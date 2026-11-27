@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { addUsage, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, clock, compactLine, dayKey, dayLevels, emptyCache, emptyTokens, emptyTrend, endTurn, eta, explain, fmtLeft, mode, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, turnsLeft, warnings } from './summarize'
+import { addUsage, asLimits, bar, barSvg, cacheAlerts, cacheHit, cacheLeft, cacheSegment, cacheTtl, clock, compactLine, dayKey, dayLevels, emptyCache, emptyTokens, emptyTrend, endTurn, eta, explain, fmtLeft, freshestLimits, isPaused, mayPing, pingMissed, mode, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, turnsLeft, warnings } from './summarize'
 import type { SuggestInput } from './summarize'
 import type { Segment } from './summarize'
 
@@ -155,6 +155,45 @@ test('a ping renews the cache only when answered, and always uses up a try', () 
   const bad = recordPing(warm, now + 250e3, false)
   expect(bad).toMatchObject({ at: now, pings: 1 })
   expect(endTurn(ok, now + 600e3).pings).toBe(0)
+})
+
+test('a ping that re-cached is a miss, and stops pings until a real turn', () => {
+  expect(pingMissed({ cache_read_input_tokens: 60000, cache_creation_input_tokens: 0 })).toBe(false)
+  expect(pingMissed({ cache_read_input_tokens: 0, cache_creation_input_tokens: 60000 })).toBe(true)
+  expect(pingMissed(undefined)).toBe(false)
+  const at = now + 250e3 // 50 s left on the 5-minute cache: inside the lead
+  expect(mayPing(warm, at, 3)).toBe(true)
+  const missed = recordPing(warm, at, true, true)
+  expect(missed).toMatchObject({ at, missed: true })
+  expect(mayPing(missed, at + 250e3, 3)).toBe(false)
+  expect(mayPing(endTurn(missed, at), at + 250e3, 3)).toBe(true)
+})
+
+test('mayPing: only inside the lead, with margin, under the budget', () => {
+  expect(mayPing(warm, now + 60e3, 3)).toBe(false) // too early
+  expect(mayPing(warm, now + 297e3, 3)).toBe(false) // 3 s left: too close to call
+  expect(mayPing(warm, now + 400e3, 3)).toBe(false) // already cold
+  expect(mayPing({ ...warm, pings: 3 }, now + 250e3, 3)).toBe(false)
+  expect(mayPing(startTurn(warm, now), now + 250e3, 3)).toBe(false) // a turn is running
+})
+
+test('isPaused: a gap well past the 5 s tick', () => {
+  expect(isPaused(null, now)).toBe(false)
+  expect(isPaused(now - 5e3, now)).toBe(false)
+  expect(isPaused(now - 31e3, now)).toBe(true)
+})
+
+test('freshestLimits: newest sample per window, account-wide', () => {
+  const five = (percentUsed: number, resetsAt = reset) => ({ kind: 'five_hour', percentUsed, resetsAt })
+  const week = { kind: 'seven_day', percentUsed: 20, resetsAt: '2026-10-22T00:00:00Z' }
+  expect(freshestLimits([], [five(60), week], now)).toEqual([five(60), week]) // a new chat takes the stored ones
+  expect(freshestLimits([five(40)], [five(60)], now)).toEqual([five(60)]) // same window: more use is newer
+  expect(freshestLimits([five(70)], [five(60)], now)).toEqual([five(70)])
+  expect(freshestLimits([five(80)], [five(5, '2026-10-18T19:30:00Z')], now)).toEqual([five(5, '2026-10-18T19:30:00Z')]) // a later window wins
+  expect(freshestLimits([week], [five(60, '2026-10-18T11:00:00Z')], now)).toEqual([week]) // a stored window that already reset is dropped
+  expect(freshestLimits([week, five(10)], [], now).map(r => r.kind)).toEqual(['five_hour', 'seven_day'])
+  expect(asLimits('junk')).toEqual([])
+  expect(asLimits([five(1), { kind: 3 }])).toEqual([five(1)])
 })
 
 // --- mascot suggestion ---

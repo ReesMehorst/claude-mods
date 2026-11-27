@@ -1,23 +1,47 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren, SessionUsage } from 'claude-code'
 
-import type { DayLog, MonthLog, Snapshot } from '../types'
-import { addUsage, bar, cacheAlerts, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, leadMs, mode, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, warnings } from './summarize'
-import type { Segment } from './summarize'
+import type { Cache, DayLog, MonthLog, Snapshot, Tokens, Trend } from '../types'
+import { addUsage, asLimits, bar, cacheAlerts, cacheLeft, compactLine, dayLevels, elapsedFraction, emptyCache, emptyTokens, emptyTrend, endTurn, explain, freshestLimits, isPaused, leadMs, mayPing, mode, pingMissed, projected, recordDay, recordPing, recordSpend, recordTurn, segments, spentReport, startTurn, suggest, warnings } from './summarize'
+import type { Limit, Segment } from './summarize'
 import { dayTilesSvg, gaugeSvg, iconSvg, mascotSvg, miniMeterSvg, paceSvg, ringSvg, splitSvg, thermometerSvg } from './art'
 import type { IconName } from './art'
 
-const snap = atom({ plugin: 'usage-band', key: 'snap' } as const, null)
-const tokens = atom({ plugin: 'usage-band', key: 'tokens' } as const, emptyTokens)
-const trend = atom({ plugin: 'usage-band', key: 'trend' } as const, emptyTrend)
-const warned = atom({ plugin: 'usage-band', key: 'warned' } as const, [] as string[])
+// Shared by every chat: the band's look, the redraw pulse and the weekly day log.
 const compact = atom({ plugin: 'usage-band', key: 'compact' } as const, false)
-const cache = atom({ plugin: 'usage-band', key: 'cache' } as const, emptyCache)
-const keepWarm = atom({ plugin: 'usage-band', key: 'keepWarm' } as const, false)
 const pulse = atom({ plugin: 'usage-band', key: 'pulse' } as const, 0) // bumped by the tick so the countdown redraws
 const menuOpen = atom({ plugin: 'usage-band', key: 'menuOpen' } as const, false)
-const dismissed = atom({ plugin: 'usage-band', key: 'dismissed' } as const, '') // suggestion key hidden by Later
 const weekLog = atom({ plugin: 'usage-band', key: 'weekLog' } as const, null)
+
+// Everything about one conversation, keyed by its session id. A /clear or a resume goes on under
+// a new id (no session.start fires for a /clear), so it starts from fresh values by itself.
+// Each atom is written out at its read and update, as the module scan needs to list them.
+// keepWarm is null until loaded from the store; dismissed is the suggestion key hidden by Later.
+const chatState = ($: EngineInterface, id: string) => ({
+  get: {
+    snap: () => read($, atom({ plugin: 'usage-band', key: 'snap', id } as const, null)),
+    tokens: () => read($, atom({ plugin: 'usage-band', key: 'tokens', id } as const, emptyTokens)),
+    trend: () => read($, atom({ plugin: 'usage-band', key: 'trend', id } as const, emptyTrend)),
+    warned: () => read($, atom({ plugin: 'usage-band', key: 'warned', id } as const, [] as string[])),
+    cache: () => read($, atom({ plugin: 'usage-band', key: 'cache', id } as const, emptyCache)),
+    keepWarm: () => read($, atom({ plugin: 'usage-band', key: 'keepWarm', id } as const, null)),
+    dismissed: () => read($, atom({ plugin: 'usage-band', key: 'dismissed', id } as const, '')),
+  },
+  set: {
+    snap: (f: (v: Snapshot | null) => Snapshot | null) => update($, atom({ plugin: 'usage-band', key: 'snap', id } as const, null), f),
+    tokens: (f: (v: Tokens) => Tokens) => update($, atom({ plugin: 'usage-band', key: 'tokens', id } as const, emptyTokens), f),
+    trend: (f: (v: Trend) => Trend) => update($, atom({ plugin: 'usage-band', key: 'trend', id } as const, emptyTrend), f),
+    warned: (f: (v: string[]) => string[]) => update($, atom({ plugin: 'usage-band', key: 'warned', id } as const, [] as string[]), f),
+    cache: (f: (v: Cache) => Cache) => update($, atom({ plugin: 'usage-band', key: 'cache', id } as const, emptyCache), f),
+    keepWarm: (f: (v: boolean | null) => boolean | null) => update($, atom({ plugin: 'usage-band', key: 'keepWarm', id } as const, null), f),
+    dismissed: (f: (v: string) => string) => update($, atom({ plugin: 'usage-band', key: 'dismissed', id } as const, ''), f),
+  },
+})
+type Chat = ReturnType<typeof chatState> & { id: string }
+const chat = async ($: EngineInterface): Promise<Chat> => {
+  const id = await $.session.id()
+  return { id, ...chatState($, id) }
+}
 
 // A fork re-reads the cached transcript, which renews its lifetime; no tools, no thinking, one word back.
 const PING = 'Cache keep-alive ping. You have no tools here. Reply with the single word "ok" straight away, without thinking it over.'
@@ -30,6 +54,18 @@ const build = (u: SessionUsage): Snapshot => ({
   startedAt: u.startedAt,
   rateLimits: u.rateLimits.map(r => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt })),
 })
+
+// The account's limits are the same in every chat: each chat saves what it last heard to the store,
+// and shows the newest sample of each window, its own or another chat's. A chat known to bill API
+// credits (spent, yet no limits reported) has no plan windows, so it takes none from the store.
+async function withSharedLimits($: EngineInterface, s: Snapshot): Promise<Snapshot> {
+  const stored = asLimits(await $.store.get('limits'))
+  if (!s.rateLimits.length && (s.costUsd ?? 0) > 0) return s
+  const merged = freshestLimits(s.rateLimits, stored, await $.clock.now())
+  if (JSON.stringify(merged) !== JSON.stringify(stored)) await $.store.set('limits', merged)
+  return { ...s, rateLimits: merged }
+}
+const snapshot = async ($: EngineInterface) => withSharedLimits($, build(await $.session.usage()))
 
 // The stored day log from an older version or a damaged store reads as no log.
 const asDayLog = (v: unknown): DayLog | null => {
@@ -47,7 +83,37 @@ const asMonthLog = (v: unknown): MonthLog | null => {
   return typeof month === 'string' && typeof since === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(since) && isMoney(api) && isMoney(plan) ? { month, since, api, plan } : null
 }
 
-// The drawn size of an art builder's SVG, read from its root tag.
+// Keep-warm per chat, kept in the store by session id so it survives a reload or a resume.
+// seen: when the chat last used it; entries untouched for 30 days are dropped.
+type WarmChats = Record<string, { isOn: boolean; seen: number }>
+const WARM_KEEP_MS = 30 * 86400e3
+const asWarmChats = (v: unknown): WarmChats => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) =>
+    !!x && typeof x === 'object' && typeof (x as { isOn?: unknown }).isOn === 'boolean' && typeof (x as { seen?: unknown }).seen === 'number')) as WarmChats
+}
+
+// The chat's keep-warm: its stored choice, else the plugin option. Loaded once into its atom.
+async function loadKeepWarm($: EngineInterface, ch: Chat, fallback: boolean) {
+  const held = await ch.get.keepWarm()
+  if (held !== null) return held
+  const mine = asWarmChats(await $.store.get('keepWarmChats'))[ch.id]
+  const isOn = mine ? mine.isOn : fallback
+  await ch.set.keepWarm(() => isOn)
+  return isOn
+}
+
+async function setKeepWarm($: EngineInterface, isOn: boolean) {
+  const ch = await chat($)
+  const now = await $.clock.now()
+  const all = asWarmChats(await $.store.get('keepWarmChats'))
+  const kept = Object.fromEntries(Object.entries(all).filter(([id, x]) => id !== ch.id && now - x.seen < WARM_KEEP_MS))
+  await $.store.set('keepWarmChats', { ...kept, [ch.id]: { isOn, seen: now } })
+  await ch.set.keepWarm(() => isOn)
+  return isOn
+}
+
+// The size of an art builder's SVG, read from its root tag.
 const size = (svg: string) => {
   const head = svg.slice(0, svg.indexOf('>'))
   return { width: Number(/\swidth="([\d.]+)"/.exec(head)?.[1] ?? 0), height: Number(/\sheight="([\d.]+)"/.exec(head)?.[1] ?? 0) }
@@ -66,41 +132,78 @@ async function toggle($: EngineInterface) {
   return isCompact
 }
 
-async function setKeepWarm($: EngineInterface, isOn: boolean) {
-  await $.store.set('keepWarm', isOn)
-  await update($, keepWarm, () => isOn)
-  return isOn
-}
-
 const closeMenu = ($: EngineInterface) => update($, menuOpen, () => false)
 
-let lastCost: number | null = null // session cost at the last turn's end, so each turn adds only its own cost to the month
+// Per session id, in case one process carries several chats (a /clear, a resume).
+const lastCost = new Map<string, number | null>() // session cost at the last turn's end, so each turn adds only its own cost to the month
+const pinging = new Set<string>() // a keep-warm fork is out; its own events must not count as a turn
+const lastTick = new Map<string, number>() // when the tick last ran, to see that the process was paused
+const holdOnce = new Set<string>() // a client just attached: decide pings on the next tick, with fresh time
 
-let isPinging = false // a keep-warm fork is out; its own events must not count as a turn
+type CacheOptions = { maxPings: number; minTokens: number; keepWarmDefault: boolean }
 
-type CacheOptions = { maxPings: number; minTokens: number }
-
-// Every 5 s: redraw the countdown, send a keep-warm ping when one is due, else toast the cold warnings.
-async function tick($: EngineInterface, { maxPings, minTokens }: CacheOptions) {
+// Every 5 s: follow the shared limits, redraw the countdown, send a keep-warm ping when one is
+// due, else toast the cold warnings.
+async function tick($: EngineInterface, { maxPings, minTokens, keepWarmDefault }: CacheOptions) {
+  const ch = await chat($)
   const now = await $.clock.now()
-  const c = await read($, cache)
+  const wasHeld = holdOnce.delete(ch.id)
+  const wasPaused = isPaused(lastTick.get(ch.id) ?? null, now) || wasHeld
+  lastTick.set(ch.id, now)
+
+  // A chat with no numbers yet (just cleared, so under a new id) gets its own; one that has
+  // them follows the limits other chats saved.
+  const held = await ch.get.snap()
+  const s = held ? await withSharedLimits($, held) : await snapshot($)
+  if (!held || JSON.stringify(s.rateLimits) !== JSON.stringify(held.rateLimits)) await ch.set.snap(() => s)
+
+  const c = await ch.get.cache()
   const left = cacheLeft(c, now)
   if (left == null) return
   await update($, pulse, n => n + 1)
-  const ctx = (await read($, snap))?.contextTokens ?? null
-  const willPing = (await read($, keepWarm)) && c.pings < maxPings && (ctx ?? 0) >= minTokens
-  if (willPing && !isPinging && left > 0 && left <= leadMs(c.ttlMs)) {
-    isPinging = true
-    let isAnswered = false
-    try { isAnswered = (await $.model.fork({ prompt: PING })).isAnswered } catch { /* counts as a failed ping */ }
-    const at = await $.clock.now()
-    await update($, cache, x => recordPing(x, at, isAnswered))
-    isPinging = false
+  const ctx = s?.contextTokens ?? null
+  const isOn = await loadKeepWarm($, ch, keepWarmDefault)
+  const willPing = isOn && !c.missed && c.pings < maxPings && (ctx ?? 0) >= minTokens
+  // After a pause, what this chat knew is stale: skip a beat and decide on the next tick.
+  if (willPing && !wasPaused && !pinging.has(ch.id) && mayPing(c, now, maxPings)) {
+    pinging.add(ch.id)
+    try {
+      // Read the time again right before sending: a ping into a cold cache re-caches the whole context.
+      const at = await $.clock.now()
+      if (!mayPing(await ch.get.cache(), at, maxPings)) return
+      let isAnswered = false
+      let missed = false
+      try {
+        const r = await $.model.fork({ prompt: PING })
+        isAnswered = r.isAnswered
+        missed = 'usage' in r && pingMissed(r.usage)
+      } catch { /* counts as a failed ping */ }
+      const done = await $.clock.now()
+      await ch.set.cache(x => recordPing(x, done, isAnswered, missed))
+    } finally {
+      pinging.delete(ch.id)
+    }
     return
   }
   const fresh = cacheAlerts(c, now, ctx, minTokens, willPing).filter(a => !c.alerted.includes(a.key))
   for (const a of fresh) $.ui.toast(`🧊 ${a.text}`, { timeoutMs: 10000 })
-  if (fresh.length) await update($, cache, x => ({ ...x, alerted: [...x.alerted, ...fresh.map(a => a.key)] }))
+  if (fresh.length) await ch.set.cache(x => ({ ...x, alerted: [...x.alerted, ...fresh.map(a => a.key)] }))
+}
+
+// Toasts the warnings not yet shown. Limit warnings belong to the account, so they are kept in the
+// store and shown once for each window, whichever chat sees them first; the rest once per chat.
+async function warn($: EngineInterface, ch: Chat, s: Snapshot, budget: number) {
+  const all = warnings(s, await $.clock.now(), budget, await ch.get.trend())
+  const isLimit = (key: string) => key.startsWith('pace:')
+  const seenHere = await ch.get.warned()
+  const stored = await $.store.get('warnedLimits')
+  const seenShared = Array.isArray(stored) ? stored.filter((k): k is string => typeof k === 'string') : []
+  const fresh = all.filter(w => !(isLimit(w.key) ? seenShared : seenHere).includes(w.key))
+  for (const w of fresh) $.ui.toast(`⚠ ${w.text}`, { timeoutMs: 8000 })
+  const mine = fresh.filter(w => !isLimit(w.key)).map(w => w.key)
+  const shared = fresh.filter(w => isLimit(w.key)).map(w => w.key)
+  if (mine.length) await ch.set.warned(ks => [...ks, ...mine])
+  if (shared.length) await $.store.set('warnedLimits', [...seenShared, ...shared].slice(-20))
 }
 
 export const register: Register = (on, options) => {
@@ -108,59 +211,67 @@ export const register: Register = (on, options) => {
   const turnWarn = Number(options.turnWarnUsd ?? 0)
   const maxPings = Math.max(0, Math.floor(Number(options.keepWarmMaxPings ?? 3)))
   const minTokens = Math.max(0, Number(options.coldMinTokens ?? 20000))
+  const keepWarmDefault = options.keepWarm === true
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'usage-band', description: 'Toggle the usage band between full and compact' })
     await $.command.register({ name: 'spent', description: "Show this month's API spend (or plan usage as API value)" })
-    await $.command.register({ name: 'keep-warm', description: 'Keep the prompt cache warm while idle: on, off, or no argument to toggle', argumentHint: '[on|off]' })
+    await $.command.register({ name: 'keep-warm', description: 'Keep this chat\'s prompt cache warm while idle: on, off, or no argument to toggle', argumentHint: '[on|off]' })
     const isCompact = (await $.store.get('compact')) === true
     await update($, compact, () => isCompact)
-    const stored = await $.store.get('keepWarm')
-    await update($, keepWarm, () => (typeof stored === 'boolean' ? stored : options.keepWarm === true))
+    const ch = await chat($)
+    await loadKeepWarm($, ch, keepWarmDefault)
     const log = asDayLog(await $.store.get('weekLog'))
     await update($, weekLog, () => log)
-    $.clock.every(5000, () => tick($, { maxPings, minTokens }))
-    const s = build(await $.session.usage())
-    lastCost = s.costUsd
-    await update($, snap, () => s)
+    $.clock.every(5000, () => tick($, { maxPings, minTokens, keepWarmDefault }))
+    const s = await snapshot($)
+    lastCost.set(ch.id, s.costUsd)
+    await ch.set.snap(() => s)
     return r
   })
 
+  // A client opening the chat (the desktop app, a phone): time may have moved on while nobody watched.
+  on('session.attach', async ($, e, next) => {
+    holdOnce.add(await $.session.id())
+    return next(e)
+  })
+
   on('session.measure', async ($, e, next) => {
-    const s = build(await $.session.usage())
-    await update($, snap, () => s)
-    const seen = await read($, warned)
-    const fresh = warnings(s, await $.clock.now(), budget, await read($, trend)).filter(w => !seen.includes(w.key))
-    for (const w of fresh) $.ui.toast(`⚠ ${w.text}`, { timeoutMs: 8000 })
-    if (fresh.length) await update($, warned, ks => [...ks, ...fresh.map(w => w.key)])
+    const ch = await chat($)
+    const s = await snapshot($)
+    await ch.set.snap(() => s)
+    await warn($, ch, s, budget)
     return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
-    if (!e.agentId && !isPinging) {
+    const id = await $.session.id()
+    if (!e.agentId && !pinging.has(id)) {
       const at = await $.clock.now()
-      await update($, cache, c => startTurn(c, at))
+      await chatState($, id).set.cache(c => startTurn(c, at))
     }
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    if (!e.agentId && !isPinging) {
+    const ch = await chat($)
+    if (!e.agentId && !pinging.has(ch.id)) {
       const at = await $.clock.now()
-      await update($, cache, c => endTurn(c, at, e.usage))
+      await ch.set.cache(c => endTurn(c, at, e.usage))
     }
     const u = e.usage
-    if (u) await update($, tokens, t => addUsage(t, u))
+    if (u) await ch.set.tokens(t => addUsage(t, u))
     if (e.agentId) return r // ponytail: subagent turns would skew context growth
-    const s = build(await $.session.usage())
-    const t = await update($, trend, t => recordTurn(t, s.costUsd, s.contextTokens))
+    const s = await snapshot($)
+    await ch.set.snap(() => s)
+    const t = await ch.set.trend(t => recordTurn(t, s.costUsd, s.contextTokens))
     if (mode(s) === 'api' && turnWarn > 0 && (t.lastTurnUsd ?? 0) >= turnWarn)
       $.ui.toast(`⚠ That turn cost $${t.lastTurnUsd!.toFixed(2)}`, { timeoutMs: 8000 })
     // Monthly spend: this turn's share of the session cost, kept across sessions.
     if (s.costUsd != null) {
-      const delta = s.costUsd - (lastCost ?? 0)
-      lastCost = s.costUsd
+      const delta = s.costUsd - (lastCost.get(ch.id) ?? 0)
+      lastCost.set(ch.id, s.costUsd)
       const log = recordSpend(asMonthLog(await $.store.get('monthLog')), await $.clock.now(), delta, mode(s) === 'plan')
       if (log) await $.store.set('monthLog', log)
     }
@@ -180,20 +291,23 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'keep-warm' }, async ($, e) => {
     const arg = String(e.args ?? '').trim().toLowerCase()
-    const isOn = await setKeepWarm($, arg === 'on' ? true : arg === 'off' ? false : !(await read($, keepWarm)))
-    return { text: isOn ? `Keep-warm on: pings the cache up to ${maxPings}× while idle (billed as cache reads)` : 'Keep-warm off: you will get an alert when the cache goes cold' }
+    const ch = await chat($)
+    const was = await loadKeepWarm($, ch, keepWarmDefault)
+    const isOn = await setKeepWarm($, arg === 'on' ? true : arg === 'off' ? false : !was)
+    return { text: isOn ? `Keep-warm on for this chat: pings the cache up to ${maxPings}× while idle (billed as cache reads)` : 'Keep-warm off for this chat: you will get an alert when the cache goes cold' }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const s = await read($, snap)
+    const ch = await chat($)
+    const s = await ch.get.snap()
     if (s === null || e.props.hasSurvey) return next(e)
     const m = mode(s)
     await read($, pulse) // subscribe: the tick redraws the cache countdown
     const now = await $.clock.now()
-    const c = await read($, cache)
-    const tr = await read($, trend)
-    const tok = await read($, tokens)
-    const keep = { isOn: await read($, keepWarm), maxPings }
+    const c = await ch.get.cache()
+    const tr = await ch.get.trend()
+    const tok = await ch.get.tokens()
+    const keep = { isOn: (await ch.get.keepWarm()) ?? keepWarmDefault, maxPings }
     const segs = segments(s, tok, now, budget, tr, c, keep)
 
     // Graphical surfaces (desktop, vscode, mobile): mascot, bubble and drawn meters. Terminal keeps the text band below.
@@ -213,7 +327,7 @@ export const register: Register = (on, options) => {
       const left = cacheLeft(c, now)
       const cacheState = c.active ? 'live' : left != null && left <= 0 ? 'cold' : left != null && left <= leadMs(c.ttlMs) ? 'soon' : 'warm'
 
-      const sug = suggest({ s, now, cache: c, keepWarm: keep.isOn, trend: tr, budgetUsd: budget, dismissed: await read($, dismissed) })
+      const sug = suggest({ s, now, cache: c, keepWarm: keep.isOn, trend: tr, budgetUsd: budget, dismissed: await ch.get.dismissed() })
       const mascot = (px: number) => art(mascotSvg(sug.mood, px), `Mascot: ${sug.mood}`, true)
 
       if (await read($, compact)) {
@@ -277,7 +391,7 @@ export const register: Register = (on, options) => {
             {item('m-clear', 'trash', 'Clear conversation', async () => { void $.command.run({ command: 'clear' }); await closeMenu($) })}
             {item('m-warm', 'cache', 'Keep cache warm', () => setKeepWarm($, !keep.isOn),
               <Text size="caption" weight="bold" color={keep.isOn ? 'warning' : undefined} dimColor={!keep.isOn}>{keep.isOn ? 'on' : 'off'}</Text>)}
-            {item('m-refresh', 'refresh', 'Refresh numbers', async () => { const fresh = build(await $.session.usage()); await update($, snap, () => fresh); await closeMenu($) })}
+            {item('m-refresh', 'refresh', 'Refresh numbers', async () => { const fresh = await snapshot($); await ch.set.snap(() => fresh); await closeMenu($) })}
             {item('m-hide', 'collapse', 'Collapse band', async () => { await closeMenu($); await toggle($) })}
           </Box>
         )
@@ -288,7 +402,7 @@ export const register: Register = (on, options) => {
           paddingX={1} paddingY="xs" borderStyle="round" borderColor="subtle" backgroundColor="rgba(139,148,158,0.15)">
           <Text>{sug.text}</Text>
           {sug.action ? <Button key="act" variant="primary" onPress={doAction}>{actionLabel}</Button> : null}
-          {sug.action ? <Button key="later" variant="secondary" dimColor onPress={() => update($, dismissed, () => sug.key)}>Later</Button> : null}
+          {sug.action ? <Button key="later" variant="secondary" dimColor onPress={() => ch.set.dismissed(() => sug.key)}>Later</Button> : null}
         </Box>
       )
 
