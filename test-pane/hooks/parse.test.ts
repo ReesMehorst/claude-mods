@@ -61,6 +61,13 @@ test('parse go, cargo and TAP', () => {
   ])
 })
 
+test('parse bun-style (pass)/(fail) with bracketed times', () => {
+  expect(parse('(pass) adds [3.39ms]\n(fail) breaks [0.6ms]')).toEqual([
+    { name: 'adds', status: 'pass' },
+    { name: 'breaks', status: 'fail' },
+  ])
+})
+
 test('summary counts when no test is named', () => {
   expect(summary('Tests: 2 failed, 40 passed, 42 total')).toEqual({ passed: 40, failed: 2, skipped: 0 })
   expect(summary('=== 3 passed, 1 skipped in 0.2s ===')).toEqual({ passed: 3, failed: 0, skipped: 1 })

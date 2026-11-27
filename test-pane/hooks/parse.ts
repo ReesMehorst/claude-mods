@@ -23,7 +23,7 @@ export function detect(command: string): Framework | null {
 }
 
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g
-const DURATION = /\s+\(?\d+(?:\.\d+)?\s*m?s\)?\s*$/ // " (5 ms)", " 12ms"
+const DURATION = /\s+[([]?\d+(?:\.\d+)?\s*m?s[)\]]?\s*$/ // " (5 ms)", " 12ms", " [3.39ms]"
 
 /** Per-test outcomes read from a run's output; failures win when one name shows twice. */
 export function parse(output: string): TestResult[] {
