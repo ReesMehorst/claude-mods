@@ -82,7 +82,18 @@ before it lapses and when it has (not while the context is under 20k tokens,
 sends a tiny tool-less ping shortly before the lapse, which renews it. A ping is a cache read of
 your context plus one word out, billed to the session and counted in `/cost`: cheaper than
 re-caching, not free. At most 3 per idle stretch (*Keep-warm pings per idle stretch*), reset by
-your next message. Pings never fire mid-turn or once the cache is already cold.
+your next message. Pings never fire mid-turn or once the cache is already cold. Keep-warm is set
+per chat: `/keep-warm` and the dropdown switch only the chat you're in, and a new chat starts
+from the `/config` setting. Pings only go out while the chat's process is running, so a chat you
+closed is not kept warm. When you reopen a chat, the band waits one tick to read the time fresh
+before it pings. If a ping finds the cache already cold (it wrote more than it read), the band
+sends no more pings until your next message.
+
+**Per chat or shared**: context, cache, keep-warm, API value and tokens belong to the chat you're
+in, and start fresh after `/clear`. The 5h and weekly limits, their pace and the day tiles belong
+to your account, so every chat shows the same values: each chat saves the latest limits it hears
+and shows the newest, even before its own first reply. A limit warning toasts once per window,
+not once per chat.
 
 **Warnings** as toasts on every surface: context at 80%, a limit on pace past 100%, spend at 90%
 of budget. On API credits, *API budget (USD)* and *Expensive turn warning (USD)* under `/config`

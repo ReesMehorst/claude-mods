@@ -23,11 +23,14 @@ const API = { ...USAGE, rateLimits: [], cost: { usd: 3 } } as unknown as Session
 
 const ran: string[] = []
 let clock: ReturnType<typeof mock.clock>
+let sessionId = 'chat-a' // which chat the session is in; a test moves it to switch chats, as /clear or a resume does
 
 // A Map stands as the store itself, so a test can read back what the band wrote.
 async function start($: Engine, on: On, usage: SessionUsage = USAGE, store?: Record<string, unknown> | Map<string, unknown>) {
   ran.length = 0
+  sessionId = 'chat-a'
   clock = mock.clock(on, { now })
+  on('session.id', () => ({ value: sessionId }))
   if (store instanceof Map) {
     on('store.get', (_$, e) => ({ value: store.get(e.key) }))
     on('store.set', (_$, e) => { store.set(e.key, e.value); return { value: undefined } })
@@ -190,15 +193,19 @@ test('terminal keeps the text band', async ($, on) => {
 const toasts: string[] = []
 let forks = 0
 
-async function warmSession($: Engine, on: On, usage: SessionUsage = USAGE, store?: Map<string, unknown>) {
+const HIT = { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 60000, cache_creation_input_tokens: 0 }
+const MISS = { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 60000 }
+
+async function warmSession($: Engine, on: On, usage: SessionUsage = USAGE, store?: Map<string, unknown>, forkUsage = HIT) {
   toasts.length = 0
   forks = 0
   on('ui.toast', (_$, e) => { toasts.push(e.text); return { value: undefined } })
   on('turn.start', (_$, e) => ({ text: e.text, turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
+  on('session.attach', (_$, e) => ({ clientId: e.clientId }))
   on('model.fork', () => {
     forks++
-    return { value: { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 60000, cache_creation_input_tokens: 0 } } }
+    return { value: { isAnswered: true, text: 'ok', usage: forkUsage } }
   })
   await start($, on, usage, store)
 }
@@ -262,4 +269,88 @@ test('a 1-hour cache write stretches the countdown', async ($, on) => {
   expect(toasts).toEqual([])
   await clock.advance(26 * 60e3) // 4 min left, inside the 5 min lead
   expect(toasts.filter(t => t.includes('goes cold'))).toHaveLength(1)
+})
+const keepWarmOn = ($: Engine) =>
+  $.command.run({ command: 'keep-warm', args: 'on', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+
+test('a ping that had to re-cache stops the pings until a real turn', async ($, on) => {
+  await warmSession($, on, USAGE, undefined, MISS)
+  await keepWarmOn($)
+  await finishTurn($)
+  await clock.advance(4 * 60e3 + 10e3)
+  expect(forks).toBe(1)
+  await clock.advance(20 * 60e3)
+  expect(forks).toBe(1) // the cache was cold: no more paying to re-cache it
+  await finishTurn($)
+  await clock.advance(4 * 60e3 + 10e3)
+  expect(forks).toBe(2)
+})
+
+test('a cold chat with keep-warm on is never pinged', async ($, on) => {
+  await warmSession($, on)
+  await finishTurn($)
+  await clock.advance(6 * 60e3) // went cold with keep-warm off
+  await keepWarmOn($)
+  await clock.advance(30 * 60e3)
+  expect(forks).toBe(0)
+})
+
+test('opening the chat holds the ping for one tick, to decide with fresh time', async ($, on) => {
+  await warmSession($, on)
+  await keepWarmOn($)
+  await finishTurn($)
+  await clock.advance(3 * 60e3 + 55e3) // 65 s left: not due yet
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await clock.advance(5e3) // due now, but the chat was just opened
+  expect(forks).toBe(0)
+  await clock.advance(5e3)
+  expect(forks).toBe(1)
+})
+
+test('keep-warm belongs to the chat it was turned on in', async ($, on) => {
+  const kept = new Map<string, unknown>()
+  await warmSession($, on, CALM, kept)
+  await keepWarmOn($)
+  const warmIn = async (id: string) => {
+    sessionId = id
+    await clock.advance(5e3) // the tick fills a new chat's numbers
+    const ui = await mountOn($)
+    await ui.press({ key: 'menu' })
+    const isOn = (await ui.find({ type: 'Text', text: 'on' })) !== undefined
+    await ui.unmount()
+    return isOn
+  }
+  expect(await warmIn('chat-b')).toBe(false)
+  expect(await warmIn('chat-a')).toBe(true)
+  expect(Object.keys(kept.get('keepWarmChats') as object)).toEqual(['chat-a'])
+})
+
+test('tokens and API value belong to the chat', async ($, on) => {
+  await warmSession($, on, API)
+  await finishTurn($, { input_tokens: 5000 })
+  let ui = await mountOn($)
+  expect((await alts(ui)).some(x => x.startsWith('Token split'))).toBe(true)
+  await ui.unmount()
+  sessionId = 'chat-b'
+  await clock.advance(5e3)
+  ui = await mountOn($)
+  expect((await alts(ui)).some(x => x.startsWith('Token split'))).toBe(false) // nothing spent here yet
+  await ui.unmount()
+})
+
+test('account limits are shared: a new chat shows what another chat saw', async ($, on) => {
+  const kept = new Map<string, unknown>([['limits', CALM.rateLimits]])
+  await start($, on, { ...CALM, rateLimits: [], cost: { usd: 0 } } as unknown as SessionUsage, kept)
+  const ui = await mountOn($)
+  expect(await ui.find({ type: 'Text', text: 'Plan usage' })).toBeDefined()
+  const a = await alts(ui)
+  expect(a.some(x => x.startsWith('5h limit'))).toBe(true)
+  expect(a).toContain('Weekly use per day')
+  await ui.unmount()
+})
+
+test('a chat saves the limits it hears for the others', async ($, on) => {
+  const kept = new Map<string, unknown>()
+  await start($, on, CALM, kept)
+  expect(kept.get('limits')).toEqual(CALM.rateLimits)
 })

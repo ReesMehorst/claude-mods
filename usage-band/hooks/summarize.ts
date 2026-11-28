@@ -19,7 +19,7 @@ const SHORT: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_
 export const emptyTokens: Tokens = { in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }
 export const emptyTrend: Trend = { lastCost: null, lastTurnUsd: null, ctxHistory: [] }
 
-export const emptyCache: Cache = { at: null, ttlMs: 300e3, active: false, pings: 0, alerted: [] }
+export const emptyCache: Cache = { at: null, ttlMs: 300e3, active: false, pings: 0, alerted: [], missed: false }
 
 export const num = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${n}`
@@ -116,12 +116,50 @@ export const leadMs = (ttlMs: number) => (ttlMs > 600e3 ? 300e3 : 60e3)
 export const cacheTtl = (u: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } | undefined, prev: number) =>
   (u?.ephemeral_5m_input_tokens ?? 0) > 0 ? 300e3 : (u?.ephemeral_1h_input_tokens ?? 0) > 0 ? 3600e3 : prev
 
-export const startTurn = (c: Cache, now: number): Cache => ({ ...c, at: now, active: true, pings: 0, alerted: [] })
-export const endTurn = (c: Cache, now: number, u?: Parameters<typeof cacheTtl>[0]): Cache => ({ ...c, at: now, ttlMs: cacheTtl(u, c.ttlMs), active: false, pings: 0, alerted: [] })
+export const startTurn = (c: Cache, now: number): Cache => ({ ...c, at: now, active: true, pings: 0, alerted: [], missed: false })
+export const endTurn = (c: Cache, now: number, u?: Parameters<typeof cacheTtl>[0]): Cache => ({ ...c, at: now, ttlMs: cacheTtl(u, c.ttlMs), active: false, pings: 0, alerted: [], missed: false })
 
 // A keep-warm ping counts against the budget whether or not it answered; only an answer renews the cache.
-export const recordPing = (c: Cache, now: number, isAnswered: boolean): Cache =>
-  ({ ...c, at: isAnswered ? now : c.at, pings: c.pings + 1, alerted: isAnswered ? [] : c.alerted })
+// One that missed re-cached the whole context: the cache is warm again, but no more pings until a real turn.
+export const recordPing = (c: Cache, now: number, isAnswered: boolean, missed = false): Cache =>
+  ({ ...c, at: isAnswered ? now : c.at, pings: c.pings + 1, alerted: isAnswered ? [] : c.alerted, missed: c.missed || missed })
+
+// A ping that wrote more of the cache than it read found it cold, and paid to re-cache it.
+export const pingMissed = (u?: { cache_read_input_tokens?: number; cache_creation_input_tokens?: number }) =>
+  u != null && (u.cache_creation_input_tokens ?? 0) > (u.cache_read_input_tokens ?? 0)
+
+// The tick runs every 5 s; a longer gap means the process was paused (the chat was closed)
+// and time moved on without it, so what it knew about the cache is stale.
+export const PAUSE_MS = 30e3
+export const isPaused = (lastTick: number | null, now: number) => lastTick != null && now - lastTick > PAUSE_MS
+
+// Whether a keep-warm ping may go out now: still warm with margin, inside the lead window, under the budget.
+export const mayPing = (c: Cache, now: number, maxPings: number) => {
+  const left = cacheLeft(c, now)
+  return left != null && !c.missed && c.pings < maxPings && left > 5e3 && left <= leadMs(c.ttlMs)
+}
+
+// --- Account limits, shared by every chat ---------------------------------------------------
+
+export type Limit = Snapshot['rateLimits'][number]
+const resetMs = (r: Limit) => (r.resetsAt ? Date.parse(r.resetsAt) : -Infinity)
+
+// Per window, the newest sample: the later reset wins, then (within one window, where use only
+// grows) the higher use. Stored samples from a window that has already reset are dropped.
+export const freshestLimits = (own: readonly Limit[], stored: readonly Limit[], now: number): Limit[] => {
+  const out = new Map<string, Limit>(own.map(r => [r.kind, r]))
+  for (const r of stored) {
+    if (r.resetsAt && resetMs(r) <= now) continue
+    const mine = out.get(r.kind)
+    if (!mine || resetMs(r) > resetMs(mine) || (resetMs(r) === resetMs(mine) && r.percentUsed > mine.percentUsed)) out.set(r.kind, r)
+  }
+  const order = (k: string) => (k === 'five_hour' ? 0 : k === 'seven_day' ? 1 : 2)
+  return [...out.values()].sort((a, b) => order(a.kind) - order(b.kind))
+}
+
+// The stored limits from an older version or a damaged store read as none.
+export const asLimits = (v: unknown): Limit[] =>
+  Array.isArray(v) ? v.filter((r): r is Limit => !!r && typeof r.kind === 'string' && typeof r.percentUsed === 'number' && (r.resetsAt === undefined || typeof r.resetsAt === 'string')) : []
 
 // Milliseconds until the cache lapses (negative once it has); null before the first turn or while a turn runs.
 export const cacheLeft = (c: Cache, now: number) => (c.at == null || c.active ? null : c.at + c.ttlMs - now)

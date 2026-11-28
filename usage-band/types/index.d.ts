@@ -14,8 +14,9 @@ export type Tokens = { in: number; out: number; cacheRead: number; cacheWrite: n
 
 // Prompt cache of the main conversation. at: when the last request that wrote or read it started
 // (null before the first turn); active: a turn is running, so it is being refreshed; pings: keep-warm
-// pings sent since the last real turn; alerted: alert keys already toasted this idle stretch.
-export type Cache = { at: number | null; ttlMs: number; active: boolean; pings: number; alerted: string[] }
+// pings sent since the last real turn; alerted: alert keys already toasted this idle stretch;
+// missed: a ping found the cache cold, so no more pings until the next real turn.
+export type Cache = { at: number | null; ttlMs: number; active: boolean; pings: number; alerted: string[]; missed?: boolean }
 
 // The mascot's poses, one per situation the band can be in.
 export type Mood = 'warm' | 'live' | 'soon' | 'keep' | 'cold' | 'full' | 'budget' | 'pace' | 'nap'
@@ -37,6 +38,12 @@ export type MonthLog = { month: string; since: string; api: number; plan: number
 
 declare module 'claude-code' {
   interface PluginState {
-    'usage-band': { snap: Snapshot | null; tokens: Tokens; trend: Trend; warned: string[]; compact: boolean; cache: Cache; keepWarm: boolean; pulse: number; menuOpen: boolean; dismissed: string; weekLog: DayLog | null }
+    // Per chat (a family keyed by session id): snap, tokens, trend, warned, cache, keepWarm, dismissed.
+    // keepWarm is null until loaded from the store. Shared by every chat: compact, pulse, menuOpen, weekLog.
+    'usage-band': {
+      snap: StateFamily<Snapshot | null>; tokens: StateFamily<Tokens>; trend: StateFamily<Trend>; warned: StateFamily<string[]>
+      cache: StateFamily<Cache>; keepWarm: StateFamily<boolean | null>; dismissed: StateFamily<string>
+      compact: boolean; pulse: number; menuOpen: boolean; weekLog: DayLog | null
+    }
   }
 }
