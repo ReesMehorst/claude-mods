@@ -1,7 +1,7 @@
 {
   "name": "usage-band",
   "author": { "name": "ReesMehorst" },
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Band above the prompt with an animated mascot that suggests the next step: context ring, prompt-cache thermometer with cold alerts and optional keep-warm, plan limits with pace bars and weekly day tiles, or API spend gauge vs budget, plus token split and warnings.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -28,6 +28,18 @@
       "title": "Keep-warm pings per idle stretch",
       "description": "Most pings sent between two of your messages; resets when you send one. 0 means never ping (alerts only).",
       "default": 3
+    },
+    "proxyKeepWarm": {
+      "type": "boolean",
+      "title": "Keep closed chats warm (local proxy)",
+      "description": "Routes this machine's chats through a small local proxy that resends a chat's last request before its cache lapses, so chats with keep-warm on stay warm even while closed. Needs Node.js. Your login stays in the proxy's memory only; requests still go only to the Anthropic API. Pings count like tiny messages against your plan, or bill as cache reads on API credits.",
+      "default": false
+    },
+    "proxyPort": {
+      "type": "number",
+      "title": "Keep-warm proxy port",
+      "description": "Port on 127.0.0.1 the keep-warm proxy listens on.",
+      "default": 8787
     },
     "coldMinTokens": {
       "type": "number",

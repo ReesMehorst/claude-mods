@@ -43,6 +43,7 @@ declare module 'claude-code' {
     'usage-band': {
       snap: StateFamily<Snapshot | null>; tokens: StateFamily<Tokens>; trend: StateFamily<Trend>; warned: StateFamily<string[]>
       cache: StateFamily<Cache>; keepWarm: StateFamily<boolean | null>; dismissed: StateFamily<string>
+      proxyPings: StateFamily<number | null> // pings the keep-warm proxy sent, while it covers the chat
       compact: boolean; pulse: number; menuOpen: boolean; weekLog: DayLog | null
     }
   }

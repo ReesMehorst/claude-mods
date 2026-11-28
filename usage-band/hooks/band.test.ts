@@ -354,3 +354,97 @@ test('a chat saves the limits it hears for the others', async ($, on) => {
   await start($, on, CALM, kept)
   expect(kept.get('limits')).toEqual(CALM.rateLimits)
 })
+
+// --- proxy keep-warm ------------------------------------------------------------------------
+
+type Fetched = { url: string; method: string; body: unknown }
+const proxyWorld = { isUp: true, chat: { on: true, at: null as number | null, ttlMs: null as number | null, pings: 0, pingsLeft: 3, missed: false, stopped: false } }
+const fetched: Fetched[] = []
+const envSet: { name: string; value?: string }[] = []
+const launched: string[][] = []
+
+async function proxySession($: Engine, on: On, opts: { base?: string } = {}) {
+  fetched.length = envSet.length = launched.length = 0
+  proxyWorld.isUp = true
+  proxyWorld.chat = { on: true, at: null, ttlMs: null, pings: 0, pingsLeft: 3, missed: false, stopped: false }
+  const env = new Map<string, string | undefined>([['ANTHROPIC_BASE_URL', opts.base ?? 'https://api.anthropic.com']])
+  on('env.get', (_$, e) => ({ value: env.get(e.name) }))
+  on('env.set', (_$, e) => { envSet.push({ name: e.name, value: e.value }); env.set(e.name, e.value); return { value: {} } })
+  on('process.run', (_$, e) => { launched.push([...e.argv]); return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
+  on('http.fetch', (_$, e) => {
+    const body = typeof e.init?.body === 'string' ? JSON.parse(e.init.body) : undefined
+    fetched.push({ url: e.url, method: e.init?.method ?? 'GET', body })
+    if (!proxyWorld.isUp) throw new Error('ECONNREFUSED')
+    const path = new URL(e.url).pathname
+    const value = path === '/_kw/health' ? { ok: true } : path.startsWith('/_kw/chat/') ? { ...proxyWorld.chat, on: body?.on ?? proxyWorld.chat.on } : {}
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(value) } }
+  })
+  await warmSession($, on, USAGE)
+}
+const routedTo = () => envSet.filter(x => x.name === 'ANTHROPIC_BASE_URL').at(-1)?.value
+
+test('proxy keep-warm routes the chat through the proxy once it answers', { options: { proxyKeepWarm: true } }, async ($, on) => {
+  await proxySession($, on)
+  expect(routedTo()).toBe('http://127.0.0.1:8787')
+  expect(envSet.some(x => x.name === 'CLAUDE_CODE_GATEWAY_HINT_HEADERS' && x.value === '1')).toBe(true)
+  expect(fetched.some(f => f.url.endsWith('/_kw/options'))).toBe(true)
+  expect(launched).toEqual([]) // it was already running
+  await keepWarmOn($)
+  await clock.advance(5e3)
+  expect(fetched.filter(f => f.url.endsWith('/_kw/chat/chat-a')).at(-1)?.body).toEqual({ on: true })
+})
+
+test('proxy keep-warm starts the proxy when it is not running, and routes only once it answers', { options: { proxyKeepWarm: true, proxyPort: 8799 } }, async ($, on) => {
+  proxyWorld.isUp = false
+  fetched.length = envSet.length = launched.length = 0
+  const env = new Map<string, string | undefined>([['ANTHROPIC_BASE_URL', 'https://api.anthropic.com']])
+  on('env.get', (_$, e) => ({ value: env.get(e.name) }))
+  on('env.set', (_$, e) => { envSet.push({ name: e.name, value: e.value }); return { value: {} } })
+  on('process.run', (_$, e) => { launched.push([...e.argv]); return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
+  on('http.fetch', (_$, e) => {
+    if (!proxyWorld.isUp) throw new Error('ECONNREFUSED')
+    return { value: { status: 200, ok: true, headers: {}, text: e.url.includes('/_kw/chat/') ? JSON.stringify(proxyWorld.chat) : '{"ok":true}' } }
+  })
+  await warmSession($, on, USAGE)
+  expect(launched).toHaveLength(1)
+  expect(launched[0]!.join(' ')).toMatch(/proxy[\/]keepwarm-proxy\.mjs --launch --port 8799$/)
+  expect(envSet).toEqual([]) // not routed while nothing answers
+  proxyWorld.isUp = true
+  await clock.advance(5e3)
+  expect(envSet.find(x => x.name === 'ANTHROPIC_BASE_URL')?.value).toBe('http://127.0.0.1:8799')
+})
+
+test('a proxy that stops answering hands the chat back to the API and says so', { options: { proxyKeepWarm: true } }, async ($, on) => {
+  await proxySession($, on)
+  expect(routedTo()).toBe('http://127.0.0.1:8787')
+  proxyWorld.isUp = false
+  await clock.advance(5e3)
+  expect(routedTo()).toBe('http://127.0.0.1:8787') // one miss may be a blip
+  await clock.advance(5e3)
+  expect(routedTo()).toBe(undefined)
+  expect(toasts.some(t => t.includes('talks to the API directly'))).toBe(true)
+  expect(launched).toHaveLength(1) // and tries to start it again
+})
+
+test('a gateway someone set up is left alone', { options: { proxyKeepWarm: true } }, async ($, on) => {
+  await proxySession($, on, { base: 'https://gateway.example' })
+  expect(fetched).toEqual([])
+  expect(envSet).toEqual([])
+  expect(launched).toEqual([])
+})
+
+test('while the proxy covers the chat, the chat pings no more itself and follows the proxy', { options: { proxyKeepWarm: true } }, async ($, on) => {
+  await proxySession($, on)
+  await keepWarmOn($)
+  await finishTurn($)
+  await clock.advance(4 * 60e3 + 10e3) // in the lead window
+  expect(forks).toBe(0)
+  expect(toasts.filter(t => t.includes('goes cold'))).toEqual([]) // the proxy will ping
+  // The proxy pinged: the countdown starts again from there.
+  proxyWorld.chat = { ...proxyWorld.chat, at: clock.now(), ttlMs: 300e3, pings: 1, pingsLeft: 2 }
+  await clock.advance(5e3)
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  expect(await ui.find({ text: /keep-warm via proxy 1\/3/ })).toBeDefined()
+  expect(await ui.find({ text: /\b5m\b|4m/ })).toBeDefined()
+  await ui.unmount()
+})

@@ -89,6 +89,27 @@ closed is not kept warm. When you reopen a chat, the band waits one tick to read
 before it pings. If a ping finds the cache already cold (it wrote more than it read), the band
 sends no more pings until your next message.
 
+**Keeping closed chats warm (proxy)**: turn on *Keep closed chats warm (local proxy)* under
+`/config` to keep chats warm even while they're closed. It needs Node.js.
+
+- **How it works.** usage-band starts a small proxy on `127.0.0.1` (port 8787, *Keep-warm proxy
+  port*) and sends each chat's API requests through it. The proxy remembers each chat's last
+  request. Shortly before that chat's cache lapses, it sends the same request again and hangs up
+  after the first event, which is enough to renew the cache. Only chats with keep-warm on are
+  pinged, with the same limits as above (3 per idle stretch), plus at most 50 pings a day.
+- **What it costs.** A ping counts like a tiny message against your plan, or bills as a cache
+  read on API credits: roughly a twentieth of re-caching on the 1-hour cache. Pings for a chat you
+  never reopen are spent for nothing.
+- **Your data.** The proxy only talks to the Anthropic API, where your requests already go. It
+  keeps each chat's last request, including your login, in memory only: nothing is written to
+  disk or logged, and a chat idle for a day is dropped. The proxy stops itself after a day with
+  nothing to do.
+- **When it's down.** A chat only goes through the proxy while it answers. If it stops
+  answering, the chat talks to the API directly again within about 10 seconds, a toast says so,
+  and usage-band tries to start the proxy again every minute. If you set your own
+  `ANTHROPIC_BASE_URL` (a gateway), the proxy isn't used.
+- **To turn it off**, switch the option off. Chats opened after that talk to the API directly.
+
 **Per chat or shared**: context, cache, keep-warm, API value and tokens belong to the chat you're
 in, and start fresh after `/clear`. The 5h and weekly limits, their pace and the day tiles belong
 to your account, so every chat shows the same values: each chat saves the latest limits it hears

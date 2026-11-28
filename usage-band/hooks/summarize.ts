@@ -166,14 +166,26 @@ export const cacheLeft = (c: Cache, now: number) => (c.at == null || c.active ? 
 
 export const fmtLeft = (ms: number) => (ms >= 3600e3 ? `${Math.floor(ms / 3600e3)}h ${Math.ceil((ms % 3600e3) / 60e3)}m` : ms >= 60e3 ? `${Math.ceil(ms / 60e3)}m` : `${Math.max(0, Math.ceil(ms / 1e3))}s`)
 
-export type KeepWarm = { isOn: boolean; maxPings: number }
+// proxyPings: pings the keep-warm proxy sent this idle stretch, when the proxy covers this chat.
+export type KeepWarm = { isOn: boolean; maxPings: number; proxyPings?: number | null }
+
+// What the keep-warm proxy reports for one chat (proxy/keepwarm-proxy.mjs, GET /_kw/chat/:id).
+export type ProxyChat = { on: boolean; at: number | null; ttlMs: number | null; pings: number; pingsLeft: number; missed: boolean; stopped: boolean }
+
+// The proxy pings while the chat's own clock may not run (the chat was closed): when it renewed
+// the cache later than this chat knows of, the countdown starts from there.
+export const fromProxy = (c: Cache, p: Pick<ProxyChat, 'at' | 'ttlMs'>): Cache =>
+  c.active || p.at == null || p.at <= (c.at ?? -Infinity) ? c : { ...c, at: p.at, ttlMs: p.ttlMs ?? c.ttlMs, alerted: [] }
+
+// Whether the proxy will still ping this chat before it lapses.
+export const proxyWillPing = (p: ProxyChat | null) => !!p && p.on && p.pingsLeft > 0 && !p.missed && !p.stopped
 
 export const cacheSegment = (c: Cache, now: number, keep: KeepWarm = { isOn: false, maxPings: 0 }): Segment | null => {
   if (c.at == null) return null
   if (c.active) return { label: 'Cache', value: 'live', detail: 'turn in progress', short: 'cache live', percent: 0, level: 'success' }
   const left = cacheLeft(c, now)!
   const ttl = c.ttlMs >= 3600e3 ? '1h' : '5m'
-  const pings = keep.isOn ? `keep-warm ${c.pings}/${keep.maxPings}` : ''
+  const pings = !keep.isOn ? '' : keep.proxyPings != null ? `keep-warm via proxy ${keep.proxyPings}/${keep.maxPings}` : `keep-warm ${c.pings}/${keep.maxPings}`
   if (left <= 0)
     return { label: 'Cache', value: 'cold', detail: ['next message re-caches', pings].filter(Boolean).join(' · '), short: 'cache cold', percent: 100, level: 'warning' }
   return {
